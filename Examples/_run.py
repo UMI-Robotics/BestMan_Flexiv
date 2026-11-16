@@ -1,4 +1,4 @@
-"""Implementation shared by the small, directly runnable example entry points."""
+"""Examples use plain [x,y,z,qw,qx,qy,qz] vectors for every input/output and recording."""
 
 import json
 import time
@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from Examples._common import parser, positive, require_completed, robot_session
-from Robotics_API import Pose
+from Robotics_API.config import pose_vector, vector
 
 
 def main(name):
@@ -19,10 +19,10 @@ def main(name):
             "--joints", type=float, nargs=7, required=True, help="Seven joint positions in radians"
         )
     if name in ("move_eef_to_pose", "graspany"):
-        p.add_argument("--pose", type=float, nargs=7, required=True, help="WORLD x y z qx qy qz qw (m, xyzw)")
+        p.add_argument("--pose", type=float, nargs=7, required=True, help="WORLD x y z qw qx qy qz (m, wxyz)")
     if name in ("move_arm_follow_joint_values", "move_eef_follow_trajectory"):
         p.add_argument(
-            "--trajectory", type=Path, required=True, help="JSON list of 7-element waypoints (poses use xyzw)"
+            "--trajectory", type=Path, required=True, help="JSON list of 7-element waypoints (poses use wxyz)"
         )
     if name in ("open_gripper", "close_gripper", "open_gripper_width", "graspany"):
         p.add_argument("--port", required=True, help="Robotiq USB serial device, e.g. /dev/ttyUSB0")
@@ -73,16 +73,14 @@ def main(name):
     if hasattr(args, "stiffness_scale") and args.stiffness_scale > 1:
         p.error("--stiffness-scale must be <=1")
     if hasattr(args, "pose"):
-        target = Pose(args.pose[:3], args.pose[3:])
+        target = pose_vector(args.pose)
     if hasattr(args, "trajectory"):
         waypoints = json.loads(args.trajectory.read_text())
         if not isinstance(waypoints, list) or not waypoints:
             p.error("trajectory must be a nonempty JSON list")
-        from Robotics_API.config import vector
-
         waypoints = [vector(row, 7, "waypoint") for row in waypoints]
         if name == "move_eef_follow_trajectory":
-            waypoints = [Pose(row[:3], row[3:]) for row in waypoints]
+            waypoints = [pose_vector(row) for row in waypoints]
     if hasattr(args, "gripper_force"):
         if any(
             not 0 <= value <= 255 for value in [args.speed, args.gripper_force, getattr(args, "position", 0)]
@@ -179,7 +177,7 @@ def main(name):
             while time.monotonic() < deadline:
                 states = arm.update_robot_states()
                 wrench = np.asarray(states.ext_wrench_in_world)
-                displacement = np.linalg.norm(np.array(states.tcp_pose[:3]) - hold.position)
+                displacement = np.linalg.norm(np.array(states.tcp_pose[:3]) - hold[:3])
                 if not np.isfinite(wrench).all() or not np.isfinite(displacement):
                     raise RuntimeError("Invalid force/pose measurement")
                 if (
@@ -211,8 +209,9 @@ def main(name):
                     break
                 if command == "r":
                     pose = arm.get_current_eef_pose()
-                    poses.append(pose.position + pose.orientation)
-                    print(f"Recorded {len(poses)} poses (xyzw)")
+                    # Persist SDK order unchanged: x, y, z, qw, qx, qy, qz.
+                    poses.append(pose)
+                    print(f"Recorded {len(poses)} poses (wxyz)")
             with args.output.open("x") as stream:
                 json.dump(poses, stream, indent=2)
         elif name == "test":
@@ -222,7 +221,7 @@ def main(name):
             print("Offline base-frame FK/IK roundtrip (no motion):", solved)
             print(
                 "Controller WORLD TCP (requires matching world/tool calibration to compare):",
-                arm.get_current_eef_pose().to_rdk(),
+                arm.get_current_eef_pose(),
             )
         else:
             raise ValueError(f"Unknown example {name}")

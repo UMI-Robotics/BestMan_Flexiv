@@ -20,6 +20,15 @@ def vector(values, size, name, *, lower=None, upper=None, strict=False, allow_in
     return result
 
 
+def pose_vector(values, name="pose"):
+    """Check [x,y,z,qw,qx,qy,qz] without reordering or normalizing the input."""
+    result = vector(values, 7, name)
+    norm = math.hypot(*result[3:])
+    if not math.isclose(norm, 1.0, rel_tol=0.0, abs_tol=1e-3):
+        raise ValueError(f"{name} quaternion [qw,qx,qy,qz] must have unit norm")
+    return result
+
+
 def positive(value, name):
     return vector([value], 1, name, lower=0, strict=True)[0]
 
@@ -60,9 +69,7 @@ class RobotConfig:
             ("flange_to_tcp", 7, {}),
         ):
             object.__setattr__(self, name, tuple(vector(getattr(self, name), size, name, **limits)))
-        from .Pose import Pose
-
-        Pose.from_rdk(self.flange_to_tcp)
+        pose_vector(self.flange_to_tcp, "flange_to_tcp")
 
     @classmethod
     def load(cls, path=None):

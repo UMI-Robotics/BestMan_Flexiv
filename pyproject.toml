@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bestman-flexiv"
-version = "0.2.0"
+version = "0.2.1"
 description = "Rizon 4 control with Flexiv RDK 1.9.4.1"
 requires-python = ">=3.10"
-dependencies = ["flexivrdk==1.9.4.1", "numpy>=1.24", "scipy>=1.10", "ikpy>=3.4,<5"]
+dependencies = ["flexivrdk==1.9.4.1", "numpy>=1.24", "scipy>=1.14", "ikpy>=3.4,<5"]
 
 [project.optional-dependencies]
 gripper = ["pyRobotiqGripper", "pyserial", "minimalmodbus"]

@@ -22,7 +22,7 @@ runtime checks pin 1.9.4.1, rather than using a range which could install 2.x.
 | `sendJointPosition(q,dq,ddq,vmax,amax)` | `SendJointPosition(q,dq,vmax,amax)`; nonzero legacy target_acc rejected |
 | Cartesian command omitted the new velocity argument | Explicit pose, wrench, 6D velocity, velocity and acceleration limits |
 | Wrench command without enabling force axes | Required `configure_force_control()` and explicit axis mask |
-| xyzw/wxyz mixed across Pose, RDK and IK | Public Pose xyzw; `from_rdk/to_rdk` convert at boundary |
+| Pose objects and inconsistent quaternion conventions | Plain `[x,y,z,qw,qx,qy,qz]` lists throughout; input, output, teaching and replay all use wxyz |
 | FK/IK hardcoded 0.15m gripper offset | Full configurable flange-to-TCP translation and rotation |
 | IK limit check included fixed links and missed final joint | Validate exactly seven active joints and IK residual |
 | EEF wait checked only position | Position, orientation and linear/angular velocity checked |
@@ -31,8 +31,12 @@ runtime checks pin 1.9.4.1, rather than using a range which could install 2.x.
 | Vendored old binaries and tracked caches | Official pinned wheel, package metadata, generated files ignored |
 
 High-level method names are retained where practical. Constructor/CLI arguments
-and quaternion inputs intentionally require migration; old recordings are not
-silently reinterpreted. The `target_acc` joint argument only tolerates all-zero
+require migration. All pose parameters and results are now plain seven-element
+`[x,y,z,qw,qx,qy,qz]` vectors, including `calculate_IK_error(goal_pose)`.
+Teaching records and replay use this same wxyz order without conversion.
+The previous 0.2.0 xyzw records must be reordered explicitly before replay; there is
+no automatic guessing of quaternion order. The Pose class and its conversion methods
+have been removed. SciPy operations also explicitly use `scalar_first=True` (SciPy >=1.14). The `target_acc` joint argument only tolerates all-zero
 legacy input with a deprecation warning, because the new NRT API has no such field.
 
 ## Force, impedance and tool coverage
@@ -79,6 +83,8 @@ claim to restore all controller state after an exception.
 
 ## Tool configuration
 
+Tool `tcp_pose` and force-control `frame_transform` both use
+`[x,y,z,qw,qx,qy,qz]` with metres and a unit wxyz quaternion.
 No actual tool mass/CoM/inertia is assumed. `config/rizon4.json` defaults to an
 identity offline TCP transform, and it does not overwrite the controller's active
 tool on connection. Use measured values, for example through:
@@ -89,7 +95,7 @@ arm.configure_tool(
     "measured_tool", mass=measured_mass_kg,
     center_of_mass=measured_com_in_flange_m,
     inertia=measured_inertia_at_com_kg_m2,
-    tcp_pose=measured_flange_relative_pose,
+    tcp_pose=measured_flange_relative_pose,  # [x,y,z,qw,qx,qy,qz], wxyz
 )
 ```
 

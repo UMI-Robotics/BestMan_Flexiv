@@ -6,38 +6,48 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from Robotics_API import Bestman_Real_Flexiv, Pose, RobotConfig
+from Robotics_API import Bestman_Real_Flexiv, RobotConfig
 
 AXES_Z = [False, False, True, False, False, False]
 
 
-def test_rdk_pose_boundary_and_sign_equivalence():
-    rotation = Rotation.from_euler("xyz", [0.2, -0.4, 1.1])
-    pose = Pose([0.3, 0.1, 0.5], rotation.as_quat())
-    np.testing.assert_allclose(Pose.from_rdk(pose.to_rdk()).as_matrix(), pose.as_matrix())
-    assert Bestman_Real_Flexiv.compute_orientation_error(pose.orientation, -rotation.as_quat()) < 1e-12
-    assert Pose([0] * 3, [0, 0, 0]).to_rdk() == [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+@pytest.mark.parametrize("container", [list, tuple, np.array])
+def test_pose_vectors_pass_through_sdk_without_reordering(arm, backend, container):
+    values = [0.3, 0.1, 0.5, 0.8, 0.2, 0.4, 0.4]
+    target = container(values)
+    arm.move_eef_to_goal_pose(target)
+    assert backend.events[-1][1] == values
+    np.testing.assert_array_equal(target, values)
+    backend.state.tcp_pose = values.copy()
+    measured = arm.get_current_eef_pose()
+    assert isinstance(measured, list) and measured == values
+    measured[0] += 1
+    assert backend.state.tcp_pose == values
+    assert arm.compute_orientation_error(values[3:], [-x for x in values[3:]]) < 1e-12
 
 
-@pytest.mark.parametrize("orientation", [[0] * 4, [np.nan, 0, 0, 1], np.diag([-1.0, 1.0, 1.0])])
-def test_invalid_pose_rejected(orientation):
+@pytest.mark.parametrize(
+    "target", [[0] * 6, [0] * 8, [0] * 7, [0, 0, 0, np.nan, 0, 0, 1], [0, 0, 0, 2, 0, 0, 0]]
+)
+def test_invalid_pose_rejected_before_commands(arm, backend, target):
     with pytest.raises(ValueError):
-        Pose([0] * 3, orientation)
+        arm.move_eef_to_goal_pose(target)
+    assert backend.events == []
 
 
 def test_read_current_pose_uses_wxyz_boundary(arm, backend):
-    assert arm.get_current_eef_pose().orientation == [0.0, 0.0, 0.0, 1.0]
+    assert arm.get_current_eef_pose() == backend.state.tcp_pose
     assert arm.get_tcp_wrench() == backend.state.ext_wrench_in_world
     assert arm.get_tcp_wrench("TCP", raw=True) == backend.state.ext_wrench_in_tcp_raw
     assert arm.get_joint_torques(external=True) == backend.state.tau_ext
 
 
 def test_force_setup_order_frame_and_velocity(arm, backend):
-    transform = Pose([0.01, 0, 0], [0, 0, 0.3])
+    transform = [0.01, 0.0, 0.0, 0.8, 0.2, 0.4, 0.4]
     arm.configure_force_control(AXES_Z, frame="TCP", frame_transform=transform, passive=True)
     names = [e[0] for e in backend.events]
     assert names.index("Stop") < names.index("SetPassiveForceControl") < names.index("SwitchMode")
-    assert backend.events[-2] == ("SetForceControlFrame", flexivrdk.CoordType.TCP, transform.to_rdk())
+    assert backend.events[-2] == ("SetForceControlFrame", flexivrdk.CoordType.TCP, transform)
     assert backend.events[-1] == ("SetForceControlAxis", AXES_Z, [0.02] * 3)
     arm.move_eef_to_goal_pose_wrench(arm.get_current_eef_pose(), [0, 0, -3, 0, 0, 0])
     event = backend.events[-1]
@@ -146,10 +156,10 @@ def test_impedance_bounds_nominal_restore_and_nullspace(arm, backend):
 
 def test_wait_includes_orientation_and_speed_not_only_position(arm, backend):
     target = arm.get_current_eef_pose()
-    backend.state.tcp_pose = Pose(target.position, [0, 0, 0.5]).to_rdk()
+    backend.state.tcp_pose = target[:3] + [float(np.cos(0.25)), 0.0, 0.0, float(np.sin(0.25))]
     assert not arm.wait_for_eef(target, timeout=0.001)
     assert backend.events[-1] == ("Stop",)
-    backend.state.tcp_pose = target.to_rdk()
+    backend.state.tcp_pose = target.copy()
     backend.state.tcp_vel = [0.1, 0, 0, 0, 0, 0]
     assert not arm.wait_for_eef(target, timeout=0.001)
     backend.state.tcp_vel = [0.0] * 6
@@ -209,13 +219,27 @@ def test_enlight_sdk_rejected_before_constructing_robot(monkeypatch, backend):
         Bestman_Real_Flexiv("Rizon4-123456", robot=backend)
 
 
-def test_rizon4_fk_ik_with_full_tool_transform(arm):
-    tool = Pose([0.01, -0.02, 0.15], [0.1, 0.2, 0.3])
-    arm.config = replace(arm.config, flange_to_tcp=tuple(tool.to_rdk()))
+def test_rizon4_fk_ik_with_full_tool_transform(arm, backend):
+    tool = [0.01, -0.02, 0.15, 0.8, 0.2, 0.4, 0.4]
+    arm.config = replace(arm.config, flange_to_tcp=tuple(tool))
     q = [0.1, -0.3, 0.2, 1.0, -0.1, 0.4, 0.1]
     pose = arm.joints_to_cartesian(q)
     recovered = arm.cartesian_to_joints(pose, q)
-    np.testing.assert_allclose(arm.joints_to_cartesian(recovered).as_matrix(), pose.as_matrix(), atol=1e-6)
+    actual = arm.joints_to_cartesian(recovered)
+    assert isinstance(pose, list) and len(pose) == 7
+    np.testing.assert_allclose(actual[:3], pose[:3], atol=1e-6)
+    assert arm.compute_orientation_error(actual[3:], pose[3:]) < 1e-6
+    # Check the wxyz output against the independently composed flange/tool transform.
+    tool_matrix = np.eye(4)
+    tool_matrix[:3, :3] = Rotation.from_quat(tool[3:], scalar_first=True).as_matrix()
+    tool_matrix[:3, 3] = tool[:3]
+    expected = arm.robot_chain.forward_kinematics([0.0] + q + [0.0]) @ tool_matrix
+    np.testing.assert_allclose(pose[:3], expected[:3, 3], atol=1e-6)
+    np.testing.assert_allclose(
+        Rotation.from_quat(pose[3:], scalar_first=True).as_matrix(), expected[:3, :3], atol=1e-6
+    )
+    backend.state.q = q.copy()
+    assert arm.calculate_IK_error(pose) < 1e-6
 
 
 def test_config_unknown_keys_invalid_values_and_default_file(tmp_path):
@@ -249,10 +273,18 @@ def test_tool_configuration_calls_idle_api_and_updates_fk(arm, backend, monkeypa
             events.append(("Switch", name))
 
     monkeypatch.setattr(arm.rdk, "Tool", Tool)
-    tcp = Pose([0, 0, 0.12], [0.1, 0.2, 0.3])
+    tcp = [0.0, 0.0, 0.12, 0.8, 0.2, 0.4, 0.4]
     arm.configure_tool(
         "measured", mass=0.8, center_of_mass=[0, 0, 0.05], inertia=[0.001] * 3 + [0] * 3, tcp_pose=tcp
     )
     assert events[0][1].mass == 0.8
-    assert arm.config.flange_to_tcp == tuple(tcp.to_rdk())
+    assert list(events[0][1].tcp_location) == tcp
+    assert arm.config.flange_to_tcp == tuple(tcp)
     assert events[-1] == ("Switch", "measured")
+
+
+def test_tcp_rotation_uses_wxyz_input_and_output(arm, backend):
+    half = float(np.sqrt(0.5))
+    backend.state.tcp_pose = [0.4, 0.0, 0.5, half, 0.0, 0.0, half]
+    arm.rotate_eef_tcp("x", np.pi / 2)
+    np.testing.assert_allclose(backend.events[-1][1], [0.4, 0.0, 0.5, 0.5, 0.5, 0.5, 0.5], atol=1e-12)

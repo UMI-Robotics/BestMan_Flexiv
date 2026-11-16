@@ -12,8 +12,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .config import RobotConfig, positive, vector
-from .Pose import Pose
+from .config import RobotConfig, pose_vector, positive, vector
 
 
 class Bestman_Real_Flexiv:
@@ -21,7 +20,7 @@ class Bestman_Real_Flexiv:
 
     Connect by serial number, e.g. ``Bestman_Real_Flexiv('Rizon4-123456')``.
     Construction reads information but does not enable or move the robot.
-    Pose quaternions use xyzw; the RDK boundary explicitly converts to wxyz.
+    All poses are [x, y, z, qw, qx, qy, qz] vectors, matching RDK directly.
     ``robot`` is dependency injection for offline interface tests, not a simulator.
     """
 
@@ -185,7 +184,7 @@ class Bestman_Real_Flexiv:
         """Add/update and activate measured tool parameters while IDLE.
 
         CoM is in flange coordinates (m); inertia at CoM is
-        [Ixx,Iyy,Izz,Ixy,Ixz,Iyz] (kg m²); tcp_pose is flange-relative Pose.
+        [Ixx,Iyy,Izz,Ixy,Ixz,Iyz] (kg m²); tcp_pose is flange-relative [x, y, z, qw, qx, qy, qz].
         This changes controller configuration, so supply actual measured values.
         """
         if not isinstance(name, str) or not name.strip() or name == "Flange":
@@ -197,11 +196,10 @@ class Bestman_Real_Flexiv:
         moments = np.linalg.eigvalsh([[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]])
         if moments[0] < -1e-12 or moments[2] > moments[0] + moments[1] + 1e-12:
             raise ValueError("Tool inertia must be positive semidefinite and physically consistent")
-        if not isinstance(tcp_pose, Pose):
-            raise TypeError("tcp_pose must be a flange-relative Pose")
+        tcp_pose = pose_vector(tcp_pose, "tcp_pose")
         params = self.rdk.ToolParams()
         params.mass, params.CoM, params.inertia = mass, com, inertia
-        params.tcp_location = tcp_pose.to_rdk()
+        params.tcp_location = tcp_pose
         with self._control():
             self.stop()
             self._check_ready()
@@ -244,7 +242,8 @@ class Bestman_Real_Flexiv:
         return list(self.update_robot_states().q)
 
     def get_current_eef_pose(self):
-        return Pose.from_rdk(self.update_robot_states().tcp_pose)
+        """Return a copied WORLD [x, y, z, qw, qx, qy, qz] list (metres)."""
+        return list(self.update_robot_states().tcp_pose)
 
     def get_tcp_wrench(self, frame="WORLD", *, raw=False):
         """Measured external [Fx,Fy,Fz,Mx,My,Mz], in N and Nm, at the TCP."""
@@ -322,6 +321,7 @@ class Bestman_Real_Flexiv:
         """Configure once before sending hybrid/force commands.
 
         Axes: [X,Y,Z,Rx,Ry,Rz]. True selects explicit force/moment control.
+        frame_transform: [x,y,z,qw,qx,qy,qz] relative to the selected root frame.
         Active control is closed-loop; passive is open-loop wrench feedforward.
         Mode changes discard this wrapper's configuration: configure again afterwards.
         """
@@ -331,10 +331,10 @@ class Bestman_Real_Flexiv:
         frame = self._frame_name(frame)
         if type(passive) is not bool:
             raise ValueError("passive must be a boolean")
-        transform = Pose([0, 0, 0], [0, 0, 0, 1]) if frame_transform is None else frame_transform
-        if not isinstance(transform, Pose):
-            raise TypeError("frame_transform must be a Pose in the root frame")
-        transform = transform.to_rdk()
+        transform = pose_vector(
+            [0, 0, 0, 1, 0, 0, 0] if frame_transform is None else frame_transform,
+            "frame_transform",
+        )
         vmax = vector(
             self.config.force_axis_max_linear_velocity
             if max_linear_velocity is None
@@ -432,10 +432,8 @@ class Bestman_Real_Flexiv:
     def _cartesian_arguments(
         self, pose, wrench, velocity, max_linear_vel, max_angular_vel, max_linear_acc, max_angular_acc
     ):
-        if not isinstance(pose, Pose):
-            raise TypeError("goal_pose must be a Pose (quaternion xyzw)")
         return (
-            pose.to_rdk(),
+            pose_vector(pose, "goal_pose"),
             vector(wrench, 6, "wrench"),
             vector([0.0] * 6 if velocity is None else velocity, 6, "velocity"),
             positive(
@@ -462,7 +460,7 @@ class Bestman_Real_Flexiv:
         max_linear_acc=None,
         max_angular_acc=None,
     ):
-        """Pure motion; explicitly disable all force axes and passive force mode."""
+        """Send WORLD [x,y,z,qw,qx,qy,qz]; disable force axes and passive mode."""
         args = self._cartesian_arguments(
             goal_pose, [0.0] * 6, velocity, max_linear_vel, max_angular_vel, max_linear_acc, max_angular_acc
         )
@@ -490,6 +488,7 @@ class Bestman_Real_Flexiv:
     ):
         """Send hybrid control after configure_force_control.
 
+        goal_pose: WORLD [x,y,z,qw,qx,qy,qz], with position in metres.
         Wrench is the desired force sensed at TCP, not force exerted by TCP:
         WORLD Fz=+5 N presses toward world -Z. Non-force axes must have zero wrench.
         """
@@ -508,8 +507,8 @@ class Bestman_Real_Flexiv:
         if axis not in ("x", "y", "z") or not np.isfinite(angle):
             raise ValueError("axis must be x/y/z and angle finite radians")
         pose = self.get_current_eef_pose()
-        rotation = Rotation.from_quat(pose.orientation) * Rotation.from_euler(axis, angle)
-        self.move_eef_to_goal_pose(Pose(pose.position, rotation.as_quat()))
+        rotation = Rotation.from_quat(pose[3:], scalar_first=True) * Rotation.from_euler(axis, angle)
+        self.move_eef_to_goal_pose(pose[:3] + rotation.as_quat(scalar_first=True).tolist())
 
     def rotate_eef_joint(self, angle):
         q = self.get_current_joint_values()
@@ -550,8 +549,8 @@ class Bestman_Real_Flexiv:
         linear_velocity_threshold=0.01,
         angular_velocity_threshold=0.02,
     ):
-        if not isinstance(target_tcp_pose, Pose):
-            raise TypeError("target_tcp_pose must be Pose")
+        """Wait for WORLD [x,y,z,qw,qx,qy,qz], checking position, angle and speed."""
+        target_tcp_pose = pose_vector(target_tcp_pose, "target_tcp_pose")
         if self._force_axes and any(self._force_axes):
             raise RuntimeError("Pose convergence is not defined for force-controlled axes")
         limits = vector(
@@ -568,11 +567,10 @@ class Bestman_Real_Flexiv:
         )
 
         def reached(states):
-            actual = Pose.from_rdk(states.tcp_pose)
+            actual = pose_vector(states.tcp_pose, "measured tcp_pose")
             return (
-                np.linalg.norm(np.array(actual.position) - target_tcp_pose.position) <= limits[0]
-                and self.compute_orientation_error(actual.orientation, target_tcp_pose.orientation)
-                <= limits[1]
+                np.linalg.norm(np.array(actual[:3]) - target_tcp_pose[:3]) <= limits[0]
+                and self.compute_orientation_error(actual[3:], target_tcp_pose[3:]) <= limits[1]
                 and np.linalg.norm(states.tcp_vel[:3]) <= limits[2]
                 and np.linalg.norm(states.tcp_vel[3:]) <= limits[3]
             )
@@ -581,49 +579,64 @@ class Bestman_Real_Flexiv:
 
     @staticmethod
     def compute_orientation_error(current_orientation, target_orientation):
-        current = Rotation.from_quat(current_orientation)
-        target = Rotation.from_quat(target_orientation)
+        """Angular distance between two [qw, qx, qy, qz] quaternions, in radians."""
+        current_q = vector(current_orientation, 4, "current_orientation")
+        target_q = vector(target_orientation, 4, "target_orientation")
+        current = Rotation.from_quat(current_q, scalar_first=True)
+        target = Rotation.from_quat(target_q, scalar_first=True)
         return float((target * current.inv()).magnitude())
 
+    @staticmethod
+    def _pose_matrix(pose):
+        """Numerical transform for internal kinematics only; public poses remain vectors."""
+        pose = pose_vector(pose)
+        matrix = np.eye(4)
+        matrix[:3, :3] = Rotation.from_quat(pose[3:], scalar_first=True).as_matrix()
+        matrix[:3, 3] = pose[:3]
+        return matrix
+
     def _tool_matrix(self):
-        return Pose.from_rdk(self.config.flange_to_tcp).as_matrix()
+        return self._pose_matrix(self.config.flange_to_tcp)
 
     def joints_to_cartesian(self, joint_values):
         """Offline FK in robot base frame using the configured flange-to-TCP transform.
 
+        Returns a plain [x,y,z,qw,qx,qy,qz] list.
         It equals RDK WORLD only if the controller world/base transform is identity.
         This kinematic URDF has blurred dynamics; do not use it for torque control.
         """
         q = self._joints(joint_values)
         matrix = self.robot_chain.forward_kinematics([0.0] + q + [0.0]) @ self._tool_matrix()
-        return Pose(matrix[:3, 3], matrix[:3, :3])
+        quaternion = Rotation.from_matrix(matrix[:3, :3]).as_quat(scalar_first=True)
+        return matrix[:3, 3].tolist() + quaternion.tolist()
 
     def cartesian_to_joints(self, pose, initial_joint_values=None):
-        if not isinstance(pose, Pose):
-            raise TypeError("pose must be Pose in robot base frame")
+        """Solve IK for base-frame [x, y, z, qw, qx, qy, qz]."""
+        pose = pose_vector(pose)
         seed = self.get_current_joint_values() if initial_joint_values is None else initial_joint_values
         if len(seed) == 9:  # Legacy full-chain input, strip fixed links before checking.
             seed = seed[1:8]
         seed = self._joints(seed)
-        flange = pose.as_matrix() @ np.linalg.inv(self._tool_matrix())
+        flange = self._pose_matrix(pose) @ np.linalg.inv(self._tool_matrix())
         full = self.robot_chain.inverse_kinematics_frame(
             flange, initial_position=[0.0] + seed + [0.0], orientation_mode="all"
         )
         q = self._joints(full[1:8])
         result = self.joints_to_cartesian(q)
         if (
-            np.linalg.norm(np.array(result.position) - pose.position) > 0.003
-            or self.compute_orientation_error(result.orientation, pose.orientation) > 0.02
+            np.linalg.norm(np.array(result[:3]) - pose[:3]) > 0.003
+            or self.compute_orientation_error(result[3:], pose[3:]) > 0.02
         ):
             raise ValueError("IK did not converge to the requested pose")
         return q
 
-    def calculate_IK_error(self, goal_position, goal_orientation):
-        target = Pose(goal_position, goal_orientation)
+    def calculate_IK_error(self, goal_pose):
+        """IK position-plus-angle residual for a base-frame seven-value pose vector."""
+        target = pose_vector(goal_pose, "goal_pose")
         actual = self.joints_to_cartesian(self.cartesian_to_joints(target))
         return float(
-            np.linalg.norm(np.array(actual.position) - target.position)
-            + self.compute_orientation_error(actual.orientation, target.orientation)
+            np.linalg.norm(np.array(actual[:3]) - target[:3])
+            + self.compute_orientation_error(actual[3:], target[3:])
         )
 
     def find_gripper(self):

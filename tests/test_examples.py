@@ -45,3 +45,23 @@ def test_pure_motion_clears_passive_even_when_all_axes_were_motion(arm, backend)
     arm.move_eef_to_goal_pose(arm.get_current_eef_pose())
     assert arm._passive_force is False
     assert ("SetPassiveForceControl", False) in backend.events
+
+
+def test_teaching_and_replay_keep_sdk_pose_vectors(arm, backend, monkeypatch, tmp_path):
+    import json
+
+    output = tmp_path / "trajectory.json"
+    values = [0.4, 0.1, 0.5, 0.8, 0.2, 0.4, 0.4]
+    backend.state.tcp_pose = values.copy()
+    monkeypatch.setattr(_common, "Bestman_Real_Flexiv", lambda *a, **kw: arm)
+    commands = iter(["r", "q"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(commands))
+    monkeypatch.setattr(sys, "argv", ["teach", "Rizon4-123456", "--output", str(output)])
+    _run.main("teach_by_demonstration")
+    assert json.loads(output.read_text()) == [values]
+    backend.events.clear()
+    monkeypatch.setattr(sys, "argv", ["replay", "Rizon4-123456", "--trajectory", str(output)])
+    _run.main("move_eef_follow_trajectory")
+    sent = [e for e in backend.events if e[0] == "SendCartesianMotionForce"]
+    assert len(sent) == 1 and sent[0][1] == values
+    assert backend.events[-1] == ("Stop",)

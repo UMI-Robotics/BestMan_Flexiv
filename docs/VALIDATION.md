@@ -1,5 +1,9 @@
 # Validation — 2026-11-16
 
+The results below describe the initial SDK migration (0.2.0). The subsequent
+0.2.1 update removes the Pose class and uses raw wxyz vectors throughout; see
+the added regression results below.
+
 ## Results
 
 | Environment | SDK | Checks | Result |
@@ -21,7 +25,8 @@ Tests cover:
 - Existence of every wrapped Robot method in the real installed binary.
 - Actual pybind signatures for joint/Cartesian commands and force/impedance configuration.
 - Real RobotStates, RobotInfo and Tool attribute availability.
-- Explicit xyzw ↔ wxyz conversion and quaternion sign equivalence.
+- Initial SDK boundary conversion and quaternion sign equivalence (superseded
+  by direct wxyz transfer in 0.2.1).
 - Force-axis/frame configuration, IDLE-only passive-mode setup, velocity protection,
   moment/contact-regulation incompatibility and clearing force state on mode changes.
 - Correct joint command arity, all-seven-joint bounds, velocity bounds and NaN rejection.
@@ -64,3 +69,23 @@ Before hardware use, verify controller 3.11.3/3.11.4, actual serial number, acti
 parameters and WORLD/base calibration. Start with read-only states and a checked
 workspace, then perform contact-free zeroing and a bounded low-force test. Actual
 force tracking, overshoot, contact loss and stop response remain hardware checks.
+
+## 0.2.1 — plain wxyz vectors throughout
+
+The Pose class is removed. Every pose input/output, teaching record, replay waypoint,
+force-control frame transform and tool TCP is `[x,y,z,qw,qx,qy,qz]`. FK/IK and TCP
+rotation use SciPy's explicit `scalar_first=True`; no boundary reordering is needed.
+
+- macOS / Python 3.12.13: **70 passed**, 2.62s.
+- 5090-02 isolated Linux / Python 3.12.14: **70 passed**, 7.20s.
+- Ruff and `git diff --check`: passed.
+- The same IKPy fixed-link-mask FutureWarning remains; no new warnings.
+
+New/updated regressions exercise nontrivial wxyz quaternions through commands,
+state reads, force frames and tool parameters; list/tuple/NumPy input without
+mutation; copied list outputs; malformed/zero/nonunit quaternion rejection;
+known-axis TCP rotation; independent FK transform comparison; and teaching JSON
+save followed by replay with exactly the original SDK-order values.
+
+These are interface and offline kinematic tests. The hardware/simulation limitations
+above are unchanged.

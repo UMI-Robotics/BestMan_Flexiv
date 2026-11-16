@@ -41,14 +41,14 @@ python -m pytest -q
 网络接口限制使用本机 NIC 的 IPv4 地址。构造对象只连接并读取信息，不自动使能或运动。
 
 ```python
-from Robotics_API import Bestman_Real_Flexiv, Pose
+from Robotics_API import Bestman_Real_Flexiv
 
 arm = Bestman_Real_Flexiv("Rizon4-123456", config="config/rizon4.json")
 try:
     arm.initialize_robot()
-    pose = arm.get_current_eef_pose()
-    # Pose: [x,y,z] 米；四元数 [qx,qy,qz,qw]，与 SciPy 一致
-    goal = Pose([pose.x, pose.y, pose.z + 0.01], pose.orientation)
+    # 输入、输出均为 [x, y, z, qw, qx, qy, qz]，位置单位是米。
+    goal = arm.get_current_eef_pose()
+    goal[2] += 0.01
     arm.move_eef_to_goal_pose(goal)
     if not arm.wait_for_eef(goal):
         raise TimeoutError("未到达目标，机器人已停止")
@@ -56,8 +56,10 @@ finally:
     arm.stop()
 ```
 
-`Pose.from_rdk([x,y,z,qw,qx,qy,qz])` / `pose.to_rdk()` 用于 SDK 格式转换。
-旧脚本中从 `tcpPose` 复制来的四元数必须显式转换，不可直接作为 xyzw 输入。
+**所有位姿都直接使用七元素列表 `[x, y, z, qw, qx, qy, qz]`，四元数顺序为 wxyz。**
+输入、输出、CLI `--pose`、示教 JSON、轨迹回放、工具 TCP、力控参考变换和 FK/IK 全链路一致，
+无需构造任何位姿对象。也可输入同样顺序的 tuple / NumPy 数组；输出是普通列表。
+发送时检查长度、有限值和单位四元数，不会交换分量或自动归一化。
 
 ## 力控
 
@@ -69,7 +71,7 @@ finally:
 arm.initialize_robot()
 try:
     # 静止且未接触环境时才执行：arm.zero_force_torque_sensors()
-    hold = arm.get_current_eef_pose()
+    hold = arm.get_current_eef_pose()  # [x,y,z,qw,qx,qy,qz]，wxyz
     arm.configure_force_control(
         [False, False, True, False, False, False],
         frame="WORLD", passive=False,
@@ -107,7 +109,7 @@ python -m Examples.force_control Rizon4-123456 --frame TCP --wrench 0 0 -3 0 0 0
 # 当前姿态柔顺保持，刚度为控制器标称值的30%
 python -m Examples.cartesian_impedance Rizon4-123456 --stiffness-scale 0.3
 python -m Examples.joint_impedance Rizon4-123456 --stiffness-scale 0.3
-# 示教记录为xyzw JSON；使用轨迹示例独立回放
+# 示教每行直接记录 [x,y,z,qw,qx,qy,qz]；回放沿用相同 wxyz 顺序
 python -m Examples.teach_by_demonstration Rizon4-123456 --output taught_poses.json
 python -m Examples.move_eef_follow_trajectory Rizon4-123456 --trajectory taught_poses.json
 # 夹爪位置示例；单位是原始0–255指令，并非毫米
