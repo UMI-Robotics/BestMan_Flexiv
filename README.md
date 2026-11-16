@@ -2,43 +2,49 @@
 
 # BestMan Flexiv — Rizon 4 / RDK 1.9.4.1
 
-Python 非实时控制封装，默认机械臂为 **Rizon 4（7 轴，无外部轴）**。
-包含关节/笛卡尔运动、混合运动力控、主动力控/被动力控、笛卡尔/关节阻抗、
-外力读取、传感器归零、工具参数配置和 Robotiq 串口夹爪。
+A Python interface for non-real-time control of **Rizon 4 (7 joints, no external axes)**.
+It supports joint and Cartesian motion, hybrid motion-force control, active and passive
+force control, Cartesian and joint impedance, external wrench readings, sensor zeroing,
+tool configuration, and serial Robotiq grippers.
 
-## SDK 版本选择
+## SDK version
 
-截至 2026-11-16，Rizon 4 使用 **`flexivrdk==1.9.4.1`**，对应控制器软件
-**v3.11.3 / v3.11.4**。PyPI 的 2.1.0 面向 **Enlight 系列**，不是 Rizon 4 的升级目标；
-2.2 发布页仍标为 WIP。安装时必须固定版本。
+As of November 16, 2026, Rizon 4 uses **`flexivrdk==1.9.4.1`**, compatible with controller
+software **v3.11.3 / v3.11.4**. Version 2.1.0 on PyPI targets the **Enlight series** and
+is not an upgrade path for Rizon 4. The 2.2 release page is still marked WIP.
+Keep the SDK version pinned when installing.
 
-- [RDK 1.9.4.1 发布说明](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v1.9.4.1)
-- [RDK 2.1 的 Enlight 兼容范围](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v2.1)
-- [完整迁移说明和力控接口](docs/SDK_MIGRATION.md)
-- [验证结果及仿真边界](docs/VALIDATION.md)
+- [RDK 1.9.4.1 release notes](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v1.9.4.1)
+- [RDK 2.1 Enlight compatibility](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v2.1)
+- [Migration guide and force-control APIs](docs/SDK_MIGRATION.md)
+- [Validation results and simulation limitations](docs/VALIDATION.md)
 
-## 安装
+## Installation
 
-推荐 Ubuntu 22.04+ / Python 3.12；官方也提供 Python 3.10 的 Linux、Windows 和
-macOS arm64 wheel。Python 3.8 不再支持。
+Ubuntu 22.04+ with Python 3.12 is recommended. Official Python 3.10 wheels are also
+available for Linux, Windows, and macOS arm64. Python 3.8 is no longer supported.
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install '.[dev]'
-# 使用串口夹爪时：python -m pip install '.[gripper]'
-# 使用 RealSense 时：python -m pip install '.[camera]'
+# For serial grippers: python -m pip install '.[gripper]'
+# For RealSense cameras: python -m pip install '.[camera]'
 python -m pytest -q
 ```
 
-无需 ROS、`roscore` 或手工添加 SDK 路径。之前使用过旧安装脚本的机器，应删除 shell 配置里
-指向 `Install/flexiv_rdk/lib_py` 的 `PYTHONPATH`。旧 SDK 二进制及 Python 缓存已从本分支移除。
-详细步骤见 [Install/install.md](Install/install.md)。
+ROS, `roscore`, and manual SDK path configuration are not required. If you previously
+used the old installation scripts, remove any `PYTHONPATH` entries pointing to
+`Install/flexiv_rdk/lib_py` from your shell configuration. Legacy SDK binaries and
+Python caches have been removed from this branch.
+See [Install/install.md](Install/install.md) for detailed instructions.
 
-## 连接与运动
+## Connection and motion
 
-新版使用机身/控制器上的**序列号**，而非旧的 `robot_ip, local_ip` 两个参数。
-网络接口限制使用本机 NIC 的 IPv4 地址。构造对象只连接并读取信息，不自动使能或运动。
+Connect using the robot's **serial number**, shown on the robot or controller,
+instead of the old `robot_ip, local_ip` arguments. Optional network interface
+restrictions use the local NIC's IPv4 address. Construction connects and reads
+information; it does not enable or move the robot.
 
 ```python
 from Robotics_API import Bestman_Real_Flexiv
@@ -46,94 +52,111 @@ from Robotics_API import Bestman_Real_Flexiv
 arm = Bestman_Real_Flexiv("Rizon4-123456", config="config/rizon4.json")
 try:
     arm.initialize_robot()
-    # 输入、输出均为 [x, y, z, qw, qx, qy, qz]，位置单位是米。
+    # Inputs and outputs: [x, y, z, qw, qx, qy, qz], with position in metres.
     goal = arm.get_current_eef_pose()
     goal[2] += 0.01
     arm.move_eef_to_goal_pose(goal)
     if not arm.wait_for_eef(goal):
-        raise TimeoutError("未到达目标，机器人已停止")
+        raise TimeoutError("Target not reached; the robot has been stopped")
 finally:
     arm.stop()
 ```
 
-**所有位姿都直接使用七元素列表 `[x, y, z, qw, qx, qy, qz]`，四元数顺序为 wxyz。**
-输入、输出、CLI `--pose`、示教 JSON、轨迹回放、工具 TCP、力控参考变换和 FK/IK 全链路一致，
-无需构造任何位姿对象。也可输入同样顺序的 tuple / NumPy 数组；输出是普通列表。
-发送时检查长度、有限值和单位四元数，不会交换分量或自动归一化。
+**All poses are plain seven-element lists `[x, y, z, qw, qx, qy, qz]`, with wxyz quaternion order.**
+The same convention applies to inputs, outputs, CLI `--pose` arguments, teaching JSON,
+trajectory replay, tool TCPs, force-control frame transforms, and FK/IK. No pose objects
+are needed. Tuples and NumPy arrays in the same order are also accepted as inputs;
+outputs are plain lists. Commands validate vector length, finite values, and unit
+quaternions without reordering components or automatically normalizing them.
 
-## 力控
+## Force control
 
-先配置实际工具质量、质心、惯量和 TCP；在机械臂静止且无接触时归零。
-`config/rizon4.json` 的 `flange_to_tcp` 只用于离线 FK/IK，不会改写控制器工具配置。
-控制器工具可通过 `configure_tool()` 设置，参数必须来自实际工具测量。
+Configure the actual tool mass, centre of mass, inertia, and TCP before zeroing sensors
+with the robot stationary and free of environmental contact. The `flange_to_tcp` field
+in `config/rizon4.json` is used only for offline FK/IK and does not overwrite the
+controller's tool configuration. Use `configure_tool()` to set controller tool parameters
+from actual measurements.
 
 ```python
 arm.initialize_robot()
 try:
-    # 静止且未接触环境时才执行：arm.zero_force_torque_sensors()
-    hold = arm.get_current_eef_pose()  # [x,y,z,qw,qx,qy,qz]，wxyz
+    # Run only while stationary and free of contact: arm.zero_force_torque_sensors()
+    hold = arm.get_current_eef_pose()  # [x,y,z,qw,qx,qy,qz], wxyz
     arm.configure_force_control(
         [False, False, True, False, False, False],
         frame="WORLD", passive=False,
         max_linear_velocity=[0.02, 0.02, 0.02],
     )
-    # 目标是 TCP 感受到的力；WORLD +Fz 表示向世界 -Z 方向压。
+    # Target wrench is sensed at the TCP; WORLD +Fz presses toward world -Z.
     arm.move_eef_to_goal_pose_wrench(hold, [0, 0, 3, 0, 0, 0])
-    # 此命令持续生效；应用必须监测接触、行程和测量力，并明确停止。
+    # The command persists; monitor contact, travel and measured wrench, then stop explicitly.
 finally:
     arm.stop()
 ```
 
-`configure_force_control()` 自动先停止至 IDLE，再设置主动力控/被动力控、坐标系和轴。
-`SetMaxContactWrench` **仅限制运动控制部分**，不等同于全局碰撞检测；开启转动力矩控制时，
-SDK 不允许同时开启该调节，需明确传入 `[float("inf")]*6`。
-被动力控是开环力前馈，SDK 的主动力控轴速度保护在此模式不生效。
-Python 的轮询限值也不是控制器级实时保护。
+`configure_force_control()` first stops the robot in IDLE, then configures active or
+passive force control, the reference frame, and the controlled axes.
+`SetMaxContactWrench` **limits only the motion-control component**; it is not global
+collision detection. The SDK does not allow this regulation while rotational moment
+control is enabled; explicitly pass `[float("inf")]*6` for that combination.
+Passive force control uses open-loop wrench feedforward, so the SDK's active
+force-axis velocity protection does not apply. Python polling limits are not
+controller-level real-time protection either.
 
 ## Examples
 
-以下命令从仓库根目录运行，将示例序列号替换为实际值。默认 20 Hz，可用 `--frequency` 设置 1–100 Hz；
-各机器人示例均支持 `--config config/rizon4.json` 和可重复的 `--interface 192.168.2.108`。
+Run these commands from the repository root and replace the example serial number
+with your robot's actual serial number. The default frequency is 20 Hz; use
+`--frequency` to select 1–100 Hz. All robot examples support
+`--config config/rizon4.json` and repeatable `--interface 192.168.2.108` arguments.
 
 ```bash
-# 只读状态，不使能机械臂
+# Read states without enabling the robot
 python -m Examples.display_states Rizon4-123456 --duration 5
-# 回到控制器 Home
+# Move to the controller's Home posture
 python -m Examples.move_arm_to_home Rizon4-123456
-# 无接触、静止条件下归零（不会自动回 Home）
+# Zero sensors while stationary and free of contact; no automatic Home motion
 python -m Examples.zero_force_torque_sensors Rizon4-123456
-# 从当前姿态开始 Z 轴 3N 主动力控，5秒结束，最大位移3cm
+# Apply 3 N along Z from the current pose, for 5 seconds, with a 3 cm travel limit
 python -m Examples.force_control Rizon4-123456 --duration 5
-# 使用TCP坐标系：力的方向必须结合实际工具朝向确定
+# TCP frame: choose the force direction according to the actual tool orientation
 python -m Examples.force_control Rizon4-123456 --frame TCP --wrench 0 0 -3 0 0 0
-# 当前姿态柔顺保持，刚度为控制器标称值的30%
+# Hold the current pose compliantly at 30% of the controller's nominal stiffness
 python -m Examples.cartesian_impedance Rizon4-123456 --stiffness-scale 0.3
 python -m Examples.joint_impedance Rizon4-123456 --stiffness-scale 0.3
-# 示教每行直接记录 [x,y,z,qw,qx,qy,qz]；回放沿用相同 wxyz 顺序
+# Record [x,y,z,qw,qx,qy,qz] directly; replay uses the same wxyz order
 python -m Examples.teach_by_demonstration Rizon4-123456 --output taught_poses.json
 python -m Examples.move_eef_follow_trajectory Rizon4-123456 --trajectory taught_poses.json
-# 夹爪位置示例；单位是原始0–255指令，并非毫米
+# Gripper position uses raw 0–255 commands, not millimetres
 python -m Examples.open_gripper_width Rizon4-123456 --port /dev/ttyUSB0 --position 100
 ```
 
-力控/阻抗示例有时长、TCP 位移和测量力/力矩限值；没有接触搜索或自动归零，
-应从已经检查过的工作位姿运行。所有运动示例在正常结束、异常、Ctrl+C 时调用 `Stop()`。
-关节目标、笛卡尔目标及轨迹由命令行明确提供，不再使用作者实验台的硬编码路径。
-各参数见 `python -m Examples.<name> --help`。
+Force-control and impedance examples enforce limits on duration, TCP displacement,
+and measured force/moment. They do not perform contact search or automatic sensor
+zeroing; start from a checked working pose. All motion examples call `Stop()` on normal
+exit, exceptions, and Ctrl+C. Joint targets, Cartesian targets, and trajectories must
+be supplied explicitly through the CLI instead of using hardcoded paths from the
+original experimental setup. See `python -m Examples.<name> --help` for parameters.
 
-`Demos/` 和 `TODO/` 保留为历史实验资料，依赖旧 API/ROS，未作为新版可运行入口；见
-[Demos/README.md](Demos/README.md)。`Sensor/Camera.py` 是原有相机模块，未做相机标定或实机验证。
+`Demos/` and `TODO/` are retained as historical experiments that depend on old APIs
+and ROS; they are not maintained entry points for this version. See
+[Demos/README.md](Demos/README.md). `Sensor/Camera.py` is the original camera module;
+camera calibration and hardware behavior have not been validated in this migration.
 
-## 验证与范围
+## Validation and scope
 
-测试使用真实 RDK wheel 核对符号/签名，并用严格命令记录器检查调用参数、顺序和异常路径。
-它不会伪造物理力控结果。5090-2 的 DJ-Sim 当前使用 Isaac/PhysX 控制接口，缺少 Flexiv RDK
-网络服务和闭环力控实现，不能证明真实控制器的力跟踪性能。
+Tests check symbols and signatures against the real RDK wheel and use a strict
+command recorder to verify arguments, call order, and failure paths. These checks
+do not establish physical force-control performance. DJ-Sim on 5090-2 currently uses
+Isaac/PhysX control interfaces and lacks a Flexiv RDK network service and closed-loop
+force-control implementation, so it cannot validate force tracking on the real controller.
 
-Python 仅提供 NRT 控制；1000 Hz 实时关节力矩/实时笛卡尔控制应使用官方 C++ API。
-Rizon 4 的离线 URDF 是运动学资源，含模糊动力学参数，不用于力矩控制或重力补偿。
+The Python interface provides NRT control only. Use the official C++ API for 1000 Hz
+real-time joint torque or Cartesian control. The offline Rizon 4 URDF is a kinematic
+resource with blurred dynamic parameters; it must not be used for torque control or
+gravity compensation.
 
-## 联系与参考
+## Contact and references
 
 - dingyan at pjlab.org.cn
 - zhaxizhuoma at pjlab.org.cn
