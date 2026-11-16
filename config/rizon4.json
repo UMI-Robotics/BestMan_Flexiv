@@ -1,0 +1,32 @@
+{
+  "model": "Rizon4",
+  "frequency": 20.0,
+  "joint_velocity_scale": 0.1,
+  "joint_max_acc": 0.5,
+  "max_linear_vel": 0.05,
+  "max_angular_vel": 0.3,
+  "max_linear_acc": 0.2,
+  "max_angular_acc": 0.5,
+  "force_axis_max_linear_velocity": [
+    0.02,
+    0.02,
+    0.02
+  ],
+  "max_contact_wrench": [
+    10.0,
+    10.0,
+    10.0,
+    3.0,
+    3.0,
+    3.0
+  ],
+  "flange_to_tcp": [
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0
+  ]
+}

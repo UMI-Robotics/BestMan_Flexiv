@@ -1,814 +1,658 @@
-# !/usr/bin/env python
-# -*- encoding: utf-8 -*-
-"""
-# @FileName       : Bestman_Real_Flexiv.py
-# @Time           : 2024-12-01 12:46:52
-# @Author         : Yan
-# @Email          : yding25@binghamton.edu
-# @Description    : A basic class for Flexiv robotic arm
-# @Usage          : None
-"""
+"""Rizon 4 interface for Flexiv RDK 1.9.4.1 (non-real-time Python control)."""
 
+from __future__ import annotations
 
-import os
-import time
-import numpy as np
-from .Pose import Pose
-from scipy.spatial.transform import Rotation as R
-import ikpy
-from ikpy.chain import Chain
-from ikpy.link import URDFLink
-import serial
-import minimalmodbus as mm
-import pyRobotiqGripper
-import flexivrdk
 import logging
-import rospy
+import time
+import warnings
+from contextlib import contextmanager
+from importlib.metadata import version
+from pathlib import Path
+
+import numpy as np
+from scipy.spatial.transform import Rotation
+
+from .config import RobotConfig, positive, vector
+from .Pose import Pose
 
 
 class Bestman_Real_Flexiv:
-    """
-    A class to interface with the Flexiv robotic arm.
+    """Single Rizon 4, seven joints, no external axes.
 
-    Attributes:
-        robot: The Flexiv robot object initialized with provided IP addresses.
-        gripper: The gripper object for controlling the robo's end effector.
-        frequency: The control frequency for the robot.
-        log: A logger object to log messages for debugging and monitoring.
-        mode: A reference to the Flexiv operation modes.
-        robot_states: A container for storing the current state of the robot.
-        robot_chain: A kinematic chain for the robot, parsed from the URDF file.
-        active_joints: A list of active (revolute or prismatic) joints in the robot.
+    Connect by serial number, e.g. ``Bestman_Real_Flexiv('Rizon4-123456')``.
+    Construction reads information but does not enable or move the robot.
+    Pose quaternions use xyzw; the RDK boundary explicitly converts to wxyz.
+    ``robot`` is dependency injection for offline interface tests, not a simulator.
     """
 
-    def __init__(self, robot_ip, local_ip, frequency):
-        # DONE
-        """
-        Initializes the Flexiv robot and related components.
-
-        Args:
-            robot_ip (str): The IP address of the Flexiv robot.
-            local_ip (str): The local IP address for communicating with the robot.
-            frequency (float): Control frequency for the robot.
-        """
-        # Robot initialization
-        self.robot = flexivrdk.Robot(robot_ip, local_ip)
-        self.gripper = None
-        self.frequency = frequency
-        self.log = flexivrdk.Log()
-        self.mode = flexivrdk.Mode
-        self.robot_states = flexivrdk.RobotStates()
-
-        # Parse URDF for kinematic chain
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        urdf_file = os.path.join(current_dir, "../Asset/flexiv_rizon4_kinematics.urdf")
-        if not os.path.exists(urdf_file):
-            raise FileNotFoundError(f"URDF file not found: {urdf_file}")
-        self.robot_chain = Chain.from_urdf_file(urdf_file) 
-        active_links_mask = ([False] + [True] * 7 + [False])  # Base + 7 DOF + End Effector (# 这个跟URDF有关系, base_link, link1, link2, link3, link4, link5, link6, link7, flange)
-        self.robot_chain.active_links_mask = active_links_mask
-        self.active_joints = [
-            joint
-            for joint in self.robot_chain.links
-            if isinstance(joint, URDFLink)
-            and (joint.joint_type == "revolute" or joint.joint_type == "prismatic")
-        ]
-        if len(self.active_joints) != 7:  # Flexiv is a 7-DOF robot
-            raise ValueError(
-                f"Expected 7 active joints, but found {len(self.active_joints)}. "
-                f"Check the URDF file and active_links_mask."
+    def __init__(
+        self, robot_sn, frequency=None, *, network_interface_whitelist=None, config=None, robot=None
+    ):
+        self.config = config if isinstance(config, RobotConfig) else RobotConfig.load(config)
+        self.frequency = positive(self.config.frequency if frequency is None else frequency, "frequency")
+        if not 1 <= self.frequency <= 100:
+            raise ValueError("Python NRT command frequency must be in [1, 100] Hz")
+        if not isinstance(robot_sn, str) or not robot_sn.replace(" ", "").startswith("Rizon4-"):
+            raise ValueError("Use a Rizon 4 serial number such as Rizon4-123456, not robot/local IPs")
+        installed = version("flexivrdk")
+        if installed != "1.9.4.1":
+            raise RuntimeError(
+                f"Rizon 4 requires the tested flexivrdk==1.9.4.1; found {installed}. "
+                "RDK 2.x targets Enlight, not Rizon 4."
             )
+        import flexivrdk
 
-        # Log successful initialization
-        self.log.info("Flexiv robot kinematic chain successfully initialized.")
-
-    # ----------------------------------------------------------------
-    # Device Initialization and State Management
-    # ----------------------------------------------------------------
-
-    def initialize_robot(self):
-        # DONE
-        """
-        Initializes the robot by clearing faults and enabling it.
-
-        This function ensures the robot is operational by:
-        1. Clearing any existing faults.
-        2. Enabling the robot.
-        3. Waiting until the robot becomes operational.
-
-        Returns:
-            bool: True if the robot is successfully initialized, False otherwise.
-        """
-        try:
-            # Clear faults
-            if self.robot.isFault():
-                self.log.warn("Fault occurred on robot server, attempting to clear...")
-                self.robot.clearFault()
-                time.sleep(1)
-                if self.robot.isFault():
-                    self.log.error("Fault cannot be cleared, exiting...")
-                    return False
-                self.log.info("Fault cleared successfully.")
-
-            # Enable the robot
-            self.log.info("Enabling the robot...")
-            self.robot.enable()
-
-            # Wait for the robot to become operational
-            for seconds_waited in range(10):
-                if self.robot.isOperational():
-                    self.log.info("Robot is now operational.")
-                    return True
-                time.sleep(1)
-
-            self.log.warn("Robot is not operational after 10 seconds.")
-            return False
-
-        except Exception as e:
-            self.log.error(f"Failed to initialize the robot: {str(e)}")
-            return False
-
-    def update_robot_states(self):
-        # DONE
-        """
-        Updates the current robot states by fetching them from the robot.
-        """
-        self.robot.getRobotStates(self.robot_states)
-
-    def go_home(self):
-        # DONE
-        """
-        Moves the robot arm to its initial (home) pose.
-        """
-        self.robot.setMode(self.mode.NRT_PRIMITIVE_EXECUTION)
-        self.robot.executePrimitive("Home()")
-
-    # ----------------------------------------------------------------
-    # Arm Functions
-    # ----------------------------------------------------------------
-
-    def get_joint_bounds(self):
-        # DONE
-        """
-        Retrieves the joint limits of the robot arm.
-
-        Returns:
-            list: A list of tuples, where each tuple contains the minimum and maximum value for a joint.
-        """
-        max_bounds = self.robot.info().qMax
-        min_bounds = self.robot.info().qMin
-        return list(zip(min_bounds, max_bounds))
-
-    def print_arm_jointInfo(self):
-        # DONE
-        """
-        Prints the joint and link information of the robot's arm.
-
-        Returns:
-            None
-        """
-        print("Arm joint and link information:")
-        for i, link in enumerate(
-            self.robot_chain.links[1:8]
+        if not all(
+            hasattr(flexivrdk.Robot, name) for name in ("SwitchMode", "SetForceControlAxis", "states")
         ):
-            print(f"Link {i + 1}: {link.name}")
-            self.log.info(f"Link {i + 1}: {link.name}")
+            raise RuntimeError(
+                "An old flexivrdk binary shadows the installed wheel; remove legacy SDK PYTHONPATH"
+            )
 
-    def get_arm_id(self):
-        # DONE
-        """
-        Retrieves the serial ID of the robot arm.
+        self.rdk = flexivrdk
+        self.mode = flexivrdk.Mode
+        self.log = logging.getLogger(__name__)
+        self.robot = (
+            robot if robot is not None else flexivrdk.Robot(robot_sn, network_interface_whitelist or [])
+        )
+        info = self.robot.info()
+        if info.model_name.replace(" ", "").lower() != "rizon4" or info.DoF != 7 or info.DoF_e:
+            raise ValueError(
+                "This configuration supports Rizon 4 with exactly seven joints and no external axes"
+            )
+        self.gripper = None
+        self.robot_states = self.robot.states()
+        self._robot_chain = None
+        self._force_axes = None
+        self._force_frame = None
+        self._contact_wrench = None
+        self._passive_force = None
 
-        Returns:
-            str: The serial number of the robot arm.
-        """
+    @property
+    def robot_chain(self):
+        if self._robot_chain is None:
+            from ikpy.chain import Chain
+
+            path = Path(__file__).resolve().parents[1] / "Asset/flexiv_rizon4_kinematics.urdf"
+            self._robot_chain = Chain.from_urdf_file(
+                str(path), active_links_mask=[False] + [True] * 7 + [False]
+            )
+        return self._robot_chain
+
+    @property
+    def active_joints(self):
+        return [link for link in self.robot_chain.links if link.joint_type in ("revolute", "prismatic")]
+
+    def _check_ready(self):
+        if self.robot.fault():
+            raise RuntimeError("Robot fault; stop and inspect before clearing it")
+        if not self.robot.operational():
+            raise RuntimeError("Robot is not operational")
+
+    def _switch_mode(self, mode):
+        self._check_ready()
+        if self.robot.mode() != mode:
+            self.robot.SwitchMode(mode)
+            self._force_axes = None
+            self._force_frame = None
+            self._contact_wrench = None
+            self._passive_force = None
+
+    @contextmanager
+    def _control(self):
+        """Stop on command failure or interruption; preserve the original exception."""
         try:
-            arm_id = self.robot.info().serialNum
-            self.log.info(f"Retrieved robot arm ID: {arm_id}")
-            return arm_id
-        except Exception as e:
-            self.log.error(f"Failed to get robot arm ID: {str(e)}")
-            return None
+            yield
+        except BaseException:
+            try:
+                self.stop()
+            except Exception:
+                self.log.exception("Robot Stop() also failed")
+            raise
 
-    def get_dof(self):
-        # DONE
-        """
-        Retrieves the degree of freedom (DOF) of the robot arm.
-
-        Returns:
-            int: The number of degrees of freedom.
-        """
-        try:
-            self.update_robot_states()
-            dof = len(self.robot_states.q)
-            self.log.info(f"Robot DOF: {dof}")
-            return dof
-        except Exception as e:
-            self.log.error(f"Failed to retrieve DOF: {str(e)}")
-            return 0
-
-    def get_joint_idx(self):
-        # DONE
-        """
-        Retrieves the indices of all active joints in the robot arm.
-
-        Returns:
-            list[int]: A list of indices for the active joints.
-        """
-        joint_indices = list(range(len(self.active_joints)))
-        self.log.info(f"Retrieved joint indices: {joint_indices}")
-        return joint_indices
-
-    def get_links_info(self):
-        # DONE
-        """
-        Retrieves the name of the TCP (Tool Center Point) link.
-
-        Returns:
-            str: Name of the TCP link.
-        """
-        try:
-            tcp_link_name = self.robot_chain.links[7].name  # Assuming TCP is at index 7
-            self.log.info(f"TCP link retrieved: {tcp_link_name}")
-            return tcp_link_name
-        except IndexError as e:
-            self.log.error(f"Failed to retrieve TCP link: {str(e)}")
-            return None
-
-    def get_current_joint_values(self):
-        # DONE
-        """
-        Retrieves the current joint angles of the robot arm.
-
-        Returns:
-            list[float]: A list of current joint angles (in radians).
-        """
-        try:
-            self.update_robot_states()
-            joint_values = self.robot_states.q
-            self.log.info(f"Current joint values: {joint_values}")
-            return joint_values
-        except Exception as e:
-            self.log.error(f"Failed to retrieve current joint values: {str(e)}")
-            return []
-
-    def get_current_eef_pose(self):
-        # DONE
-        """
-        Retrieves the current pose of the robot arm's end effector.
-
-        Returns:
-            Pose: A Pose object representing the end effector's position and orientation.
-        """
-        try:
-            self.update_robot_states()
-            tcp_pose = self.robot_states.tcpPose  # [x, y, z, qw, qx, qy, qz]
-            position = tcp_pose[:3]
-            orientation = tcp_pose[3:]  # [qw, qx, qy, qz] # !
-            pose = Pose(position, orientation)
-            self.log.info(f"Current end effector pose: {pose}")
-            return pose
-        except Exception as e:
-            self.log.error(f"Failed to retrieve end effector pose: {str(e)}")
-            return None
-
-    def print_robot_info(self):
-        # DONE
-        """
-        Print Flexiv robot information to confirm available attributes.
-        """
-        try:
-            info = self.robot.info()
-            print("Robot Info Attributes:")
-            for attr in dir(info):
-                if not attr.startswith("_"):
-                    print(f"{attr}: {getattr(info, attr)}")
-        except Exception as e:
-            self.log.error(f"Failed to retrieve robot information: {str(e)}")
-
-    def move_arm_to_joint_values(self, joint_values, target_vel=None, target_acc=None, MAX_VEL=None, MAX_ACC=None):
-        # DONE
-        """
-        Moves the robot arm to the specified joint angles with optional velocity and acceleration.
-
-        Args:
-            joint_values (list[float]): Desired joint angles (in radians) for each joint.
-            target_vel (list[float], optional): Target velocities for each joint. Defaults to None.
-            target_acc (list[float], optional): Target accelerations for each joint. Defaults to None.
-            MAX_VEL (list[float], optional): Maximum velocities for each joint. Defaults to dqMax from RobotInfo.
-            MAX_ACC (list[float], optional): Maximum accelerations for each joint. Defaults to [5.0] rad/s².
-
-        Returns:
-            None
-        """
-        try:
-            self.robot.setMode(self.mode.NRT_JOINT_POSITION)
-            self.update_robot_states()
-            DOF = len(self.robot_states.q)
-            
-            # Key coefficient to regulate the maximum speed, with a range of [0.0001, 1]
-            alpha = 0.2
-            
-            robot_info = self.robot.info()
-            default_max_vel = [vel * alpha for vel in robot_info.dqMax]
-            default_max_acc = [5.0] * DOF  # Assuming 5 rad/s² as default maximum acceleration
-            MAX_VEL = MAX_VEL or default_max_vel
-            MAX_ACC = MAX_ACC or default_max_acc
-            target_vel = target_vel if target_vel is not None else [0.0] * DOF
-            target_acc = target_acc if target_acc is not None else [0.0] * DOF
-
-            # Validate joint values within limits
-            joint_limits = zip(robot_info.qMin, robot_info.qMax)
-            for i, (q, (q_min, q_max)) in enumerate(zip(joint_values, joint_limits)):
-                if not (q_min <= q <= q_max):
-                    raise ValueError(
-                        f"Joint {i + 1} value {q} out of range [{q_min}, {q_max}]"
+    def initialize_robot(self, timeout=30.0):
+        """Clear faults, enable, then wait at most timeout seconds. Raise on failure."""
+        timeout = positive(timeout, "timeout")
+        with self._control():
+            if self.robot.fault() and not self.robot.ClearFault():
+                raise RuntimeError("Robot fault could not be cleared")
+            self.robot.Enable()
+            deadline = time.monotonic() + timeout
+            while not self.robot.operational():
+                if self.robot.fault():
+                    raise RuntimeError("Robot fault while enabling")
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "Robot did not become operational; check E-stop and Auto (Remote) mode"
                     )
-
-            # Send joint command
-            self.robot.sendJointPosition(
-                joint_values, target_vel, target_acc, MAX_VEL, MAX_ACC
-            )
-            self.log.info(f"Moved arm to joint values: {joint_values}")
-        except Exception as e:
-            self.log.error(f"Failed to move arm to joint values: {str(e)}")
-
-    # ----------------------------------------------------------------
-    # End Effector (EEF) Functions
-    # ----------------------------------------------------------------
-
-    def move_eef_to_goal_pose(self, goal_pose, max_linear_vel=0.1, max_angular_vel=0.5):
-        # DONE
-        """
-        Moves the end effector to the specified pose.
-
-        Args:
-            goal_pose (Pose): The desired pose (position and orientation in quaternion format).
-            max_linear_vel (float): Maximum linear velocity. Defaults to 0.1 m/s.
-            max_angular_vel (float): Maximum angular velocity. Defaults to 0.5 rad/s.
-
-        Returns:
-            None
-        """
-        try:
-            if not isinstance(goal_pose, Pose):
-                raise TypeError("pose must be an instance of Pose")
-
-            wrench = [0.0] * 6  # No wrench force
-            position = goal_pose.get_position()
-            orientation = goal_pose.get_orientation(type="quaternion")
-            pose = position + orientation
-
-            self.robot.setMode(self.mode.NRT_CARTESIAN_MOTION_FORCE)
-            self.robot.sendCartesianMotionForce(pose, wrench, max_linear_vel, max_angular_vel)
-            self.log.info(f"Moved end effector to pose: {pose}")
-        except Exception as e:
-            self.log.error(f"Failed to move end effector to goal pose: {str(e)}")
-
-    def move_eef_to_goal_pose_wrench(self, goal_pose, wrench, max_linear_vel=0.1, max_angular_vel=0.5, contact_wrench=None):
-        # TODO
-        """
-        Moves the end effector to a target pose with a specified wrench control.
-
-        Args:
-            goal_pose (Pose): Desired pose of the end effector (position and quaternion orientation).
-            wrench (list[float]): Target TCP wrench [fx, fy, fz, mx, my, mz] in the force control reference frame.
-            max_linear_vel (float): Maximum linear velocity. Defaults to 0.1 m/s.
-            max_angular_vel (float): Maximum angular velocity. Defaults to 0.5 rad/s.
-            contact_wrench (list[float], optional): Maximum contact wrench for collision detection.
-
-        Returns:
-            None
-        """
-        try:
-            if not isinstance(goal_pose, Pose):
-                raise TypeError("goal_pose must be an instance of Pose")
-
-            position = goal_pose.get_position()
-            orientation = goal_pose.get_orientation(type="quaternion")
-            pose = position + orientation  # Combine position and orientation
-
-            self.robot.setMode(self.mode.NRT_CARTESIAN_MOTION_FORCE)
-
-            if contact_wrench:
-                self.robot.setMaxContactWrench(contact_wrench)
-                self.log.info(f"Set contact wrench limit: {contact_wrench}")
-
-            self.robot.sendCartesianMotionForce(
-                pose, wrench, max_linear_vel, max_angular_vel
-            )
-            self.log.info(f"Moved EEF to pose: {goal_pose} with wrench: {wrench}")
-        except Exception as e:
-            self.log.error(f"Failed to move EEF to goal pose with wrench: {str(e)}")
-
-    def rotate_eef_tcp(self, axis, angle):
-        # TODO
-        """
-        Rotates the end effector TCP around a specified axis by a given angle.
-
-        Args:
-            axis (str): Axis to rotate around ('x', 'y', or 'z').
-            angle (float): Rotation angle in radians.
-
-        Returns:
-            None
-        """
-        try:
-            current_pose = self.get_current_eef_pose()
-            position = current_pose.get_position()
-            quaternion = current_pose.get_orientation(type="quaternion")
-
-            rotation = R.from_quat(quaternion)
-            if axis == "x":
-                rotation = rotation * R.from_rotvec([angle, 0, 0])
-            elif axis == "y":
-                rotation = rotation * R.from_rotvec([0, angle, 0])
-            elif axis == "z":
-                rotation = rotation * R.from_rotvec([0, 0, angle])
-            else:
-                raise ValueError("Invalid axis. Axis must be one of 'x', 'y', or 'z'.")
-
-            new_quaternion = list(rotation.as_quat())
-            new_pose = Pose(position, new_quaternion)
-
-            self.move_eef_to_goal_pose(new_pose)
-            self.log.info(f"Rotated EEF TCP around {axis}-axis by {angle} radians.")
-        except Exception as e:
-            self.log.error(f"Failed to rotate EEF TCP: {str(e)}")
-
-    def rotate_eef_joint(self, angle):
-        # TODO
-        """
-        Rotates the end effector of the robot arm using the last joint.
-
-        Args:
-            angle (float): Desired rotation angle in radians.
-
-        Returns:
-            None
-        """
-        try:
-            current_joint_values = self.get_current_joint_values()
-            target_joint_values = current_joint_values.copy()
-
-            if len(target_joint_values) <= 6:
-                raise ValueError(
-                    "Joint array is too short to perform EEF joint rotation."
-                )
-
-            target_joint_values[6] += angle  # Assuming the 7th joint rotates the EEF
-            DOF = len(self.robot_states.q)
-            target_vel = [0.0] * DOF
-            target_acc = [0.0] * DOF
-            MAX_VEL = [1.0] * DOF
-            MAX_ACC = [1.0] * DOF
-
-            self.robot.setMode(self.mode.NRT_JOINT_POSITION)
-            self.robot.sendJointPosition(
-                target_joint_values, target_vel, target_acc, MAX_VEL, MAX_ACC
-            )
-            self.log.info(f"Rotated EEF joint by {angle} radians.")
-        except Exception as e:
-            self.log.error(f"Failed to rotate EEF joint: {str(e)}")
-
-    # ----------------------------------------------------------------
-    # Functions for IK
-    # ----------------------------------------------------------------
-
-    def joints_to_cartesian(self, joint_values):
-        # DONE
-        """
-        Converts the robot's joint angles to its Cartesian coordinates. #法兰盘
-
-        Args:
-            joint_values (list[float]): A list of joint angles for the robot arm.
-
-        Returns:
-            Pose: A Pose object representing the Cartesian position and quaternion orientation.
-        """
-        try:
-            if len(joint_values) != len(self.active_joints):
-                raise ValueError(
-                    "The number of joint values does not match the number of active joints."
-                )
-
-            full_joint_values = np.zeros(len(self.robot_chain.links))
-            active_joint_indices = [
-                self.robot_chain.links.index(joint) for joint in self.active_joints
-            ]
-
-            for i, joint_value in enumerate(joint_values):
-                full_joint_values[active_joint_indices[i]] = joint_value
-
-            cartesian_matrix = self.robot_chain.forward_kinematics(full_joint_values)
-            position = cartesian_matrix[:3, 3]
-            orientation_matrix = cartesian_matrix[:3, :3]
-            quaternion = R.from_matrix(orientation_matrix).as_quat()  # qx, qy, qz, qw
-            quaternion = [
-                quaternion[3],
-                quaternion[0],
-                quaternion[1],
-                quaternion[2],
-            ]  # qw, qx, qy, qz # !!!
-
-            # 添加 gripper 长度补偿（沿着 Z 轴正方向）
-            gripper_length = 0.15  # 这里的 0.15 是 gripper 的长度，需要与 cartesian_to_joints 保持一致
-            position = position + gripper_length * orientation_matrix[:, 2]  # Z 轴方向的偏移
-
-            self.log.info(f"Converted joint values {joint_values} to Cartesian Pose.")
-            return Pose(position, quaternion)
-        except Exception as e:
-            self.log.error(f"Error converting joint values to Cartesian: {str(e)}")
-            raise
-
-    def cartesian_to_joints(self, pose, initial_joint_values=None):
-        # DONE
-        """
-        Args:
-            position (list[float]): Cartesian position of the robot arm.
-            orientation (list[float]): Quaternion orientation of the robot arm.
-
-        Returns:
-            list[float]: Joint angles corresponding to the given Cartesian coordinates.
-        """
-        try:
-            print(f"pose.orientation:{pose.orientation}")
-            orientation = pose.orientation  # qw, qx, qy, qz
-            orientation = [
-                orientation[1],
-                orientation[2],
-                orientation[3],
-                orientation[0],
-            ]  # [qx, qy, qz, qw] # !!!
-            rotation = R.from_quat(orientation)
-            rotation_matrix = rotation.as_matrix()
-
-            target_pose = np.eye(4)
-            target_pose[:3, :3] = rotation_matrix
-            # 添加 gripper 长度补偿（沿着 Z 轴正方向）
-            gripper_length = 0.15  # 这里的 0.15 是 gripper 的长度，需要与 joints_to_cartesian 保持一致
-            target_pose[:3, 3] = (pose.position - gripper_length * rotation_matrix[:, 2])  # 去掉gripper的长度
-            
-            if initial_joint_values is None:
-                initial_joint_values = [0] + self.get_current_joint_values() + [0]
-
-            joint_values = ikpy.inverse_kinematics.inverse_kinematic_optimization(
-                chain=self.robot_chain,
-                target_frame=target_pose,
-                starting_nodes_angles=initial_joint_values,
-                orientation_mode="all",
-            )
-
-            if not self._validate_joint_limits(joint_values):
-                raise ValueError("Joint values exceed physical joint limits.")
-            self.log.info(f"Converted Cartesian position {pose.position} to joint values.")
-            return joint_values[1:8]
-        except Exception as e:
-            self.log.error(f"Error converting Cartesian to joint values: {str(e)}")
-            raise
-
-    def _validate_joint_limits(self, joint_values):
-        # DONE
-        """
-        Validates if the joint values are within the robot's physical joint limits.
-
-        Args:
-            joint_values (list[float]): Joint values to validate.
-
-        Returns:
-            bool: True if all joint values are within limits, False otherwise.
-        """
-        joint_bounds = self.get_joint_bounds()
-        for joint_value, (lower, upper) in zip(joint_values, joint_bounds):
-            if not (lower <= joint_value <= upper):
-                return False
+                time.sleep(0.05)
         return True
 
-    def calculate_IK_error(self, goal_position, goal_orientation):
-        # TODO
-        """
-        Calculates the inverse kinematics (IK) error for reaching a target pose.
-
-        Args:
-            goal_position (list[float]): Desired Cartesian position of the robot arm.
-            goal_orientation (list[float]): Desired quaternion orientation of the robot arm.
-
-        Returns:
-            float: The IK error as the Euclidean distance between the desired and actual pose.
-        """
+    def stop(self):
+        """Blocking stop and transition to IDLE. Does not disable the servos."""
         try:
-            joint_values = self.cartesian_to_joints(goal_position, goal_orientation)
-            actual_pose = self.joints_to_cartesian(joint_values)
+            self.robot.Stop()
+        finally:
+            self._force_axes = self._force_frame = self._contact_wrench = None
+            self._passive_force = None
 
-            position_error = np.linalg.norm(
-                np.array(goal_position) - np.array(actual_pose.get_position())
+    def update_robot_states(self):
+        self.robot_states = self.robot.states()
+        return self.robot_states
+
+    def execute_primitive(self, name, parameters=None, *, timeout=30.0):
+        """Execute the new name + parameter-dictionary API and wait for termination."""
+        timeout = positive(timeout, "timeout")
+        with self._control():
+            self._switch_mode(self.mode.NRT_PRIMITIVE_EXECUTION)
+            self.robot.ExecutePrimitive(name, {} if parameters is None else parameters)
+            deadline = time.monotonic() + timeout
+            while True:
+                self._check_ready()
+                if self.robot.primitive_states().get("terminated", False):
+                    return
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Primitive {name} timed out")
+                time.sleep(0.02)
+
+    def execute_plan(self, name, *, wait=True, timeout=60.0):
+        timeout = positive(timeout, "timeout")
+        with self._control():
+            self._switch_mode(self.mode.NRT_PLAN_EXECUTION)
+            self.robot.ExecutePlan(name)
+            if wait:
+                deadline = time.monotonic() + timeout
+                while self.robot.busy():
+                    self._check_ready()
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Plan {name} timed out")
+                    time.sleep(0.02)
+                self._check_ready()
+
+    def go_home(self, timeout=60.0):
+        self.execute_plan("PLAN-Home", timeout=timeout)
+
+    def zero_force_torque_sensors(self, timeout=30.0):
+        """Run only at rest, with correct tool mass/CoM and no environmental contact."""
+        self.execute_primitive("ZeroFTSensor", timeout=timeout)
+
+    def get_tool(self):
+        """Return the active controller tool name and its RDK ToolParams."""
+        tool = self.rdk.Tool(self.robot)
+        return tool.name(), tool.params()
+
+    def configure_tool(self, name, *, mass, center_of_mass, inertia, tcp_pose):
+        """Add/update and activate measured tool parameters while IDLE.
+
+        CoM is in flange coordinates (m); inertia at CoM is
+        [Ixx,Iyy,Izz,Ixy,Ixz,Iyz] (kg m²); tcp_pose is flange-relative Pose.
+        This changes controller configuration, so supply actual measured values.
+        """
+        if not isinstance(name, str) or not name.strip() or name == "Flange":
+            raise ValueError("Use a nonempty custom tool name, not Flange")
+        mass = vector([mass], 1, "mass", lower=0)[0]
+        com = vector(center_of_mass, 3, "center_of_mass")
+        inertia = vector(inertia, 6, "inertia")
+        xx, yy, zz, xy, xz, yz = inertia
+        moments = np.linalg.eigvalsh([[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]])
+        if moments[0] < -1e-12 or moments[2] > moments[0] + moments[1] + 1e-12:
+            raise ValueError("Tool inertia must be positive semidefinite and physically consistent")
+        if not isinstance(tcp_pose, Pose):
+            raise TypeError("tcp_pose must be a flange-relative Pose")
+        params = self.rdk.ToolParams()
+        params.mass, params.CoM, params.inertia = mass, com, inertia
+        params.tcp_location = tcp_pose.to_rdk()
+        with self._control():
+            self.stop()
+            self._check_ready()
+            tool = self.rdk.Tool(self.robot)
+            if tool.exist(name):
+                tool.Update(name, params)
+            else:
+                tool.Add(name, params)
+            tool.Switch(name)
+        # Keep offline FK/IK consistent with the newly selected controller TCP.
+        from dataclasses import replace
+
+        self.config = replace(self.config, flange_to_tcp=tuple(params.tcp_location))
+
+    def get_joint_bounds(self):
+        info = self.robot.info()
+        return list(zip(info.q_min, info.q_max))
+
+    def get_arm_id(self):
+        return self.robot.info().serial_num
+
+    def get_dof(self):
+        return self.robot.info().DoF
+
+    def get_joint_idx(self):
+        return list(range(self.get_dof()))
+
+    def get_links_info(self):
+        """Offline URDF terminal link is the flange, not the controller's active TCP."""
+        return self.robot_chain.links[-1].name
+
+    def print_arm_jointInfo(self):
+        for i, joint in enumerate(self.active_joints):
+            print(i, joint.name, joint.bounds)
+
+    def print_robot_info(self):
+        print(self.robot.info())
+
+    def get_current_joint_values(self):
+        return list(self.update_robot_states().q)
+
+    def get_current_eef_pose(self):
+        return Pose.from_rdk(self.update_robot_states().tcp_pose)
+
+    def get_tcp_wrench(self, frame="WORLD", *, raw=False):
+        """Measured external [Fx,Fy,Fz,Mx,My,Mz], in N and Nm, at the TCP."""
+        frame = self._frame_name(frame).lower()
+        return list(getattr(self.update_robot_states(), f"ext_wrench_in_{frame}" + ("_raw" if raw else "")))
+
+    def get_joint_torques(self, *, external=False):
+        states = self.update_robot_states()
+        return list(states.tau_ext if external else states.tau)
+
+    def _joints(self, values):
+        values = vector(values, 7, "joint values")
+        if any(not lo <= value <= hi for value, (lo, hi) in zip(values, self.get_joint_bounds())):
+            raise ValueError("Joint target exceeds controller joint limits")
+        return values
+
+    def _validate_joint_limits(self, values):
+        try:
+            self._joints(values)
+            return True
+        except ValueError:
+            return False
+
+    def move_arm_to_joint_values(
+        self, joint_values, target_vel=None, target_acc=None, MAX_VEL=None, MAX_ACC=None, *, impedance=False
+    ):
+        """Send an NRT setpoint; call wait_for_joints for blocking motion.
+
+        RDK removed target acceleration from SendJointPosition. Legacy zero input
+        is accepted with a warning; nonzero input is rejected, never reinterpreted.
+        """
+        q = self._joints(joint_values)
+        dq = vector([0.0] * 7 if target_vel is None else target_vel, 7, "target_vel")
+        if target_acc is not None:
+            if any(vector(target_acc, 7, "target_acc")):
+                raise ValueError("RDK 1.9 SendJointPosition has no target_acc argument; use MAX_ACC")
+            warnings.warn("target_acc is obsolete in RDK 1.9; omit it", DeprecationWarning, stacklevel=2)
+        limits = self.robot.info().dq_max
+        vmax = vector(
+            [self.config.joint_velocity_scale * v for v in limits] if MAX_VEL is None else MAX_VEL,
+            7,
+            "MAX_VEL",
+            lower=0,
+            strict=True,
+        )
+        amax = vector(
+            [self.config.joint_max_acc] * 7 if MAX_ACC is None else MAX_ACC,
+            7,
+            "MAX_ACC",
+            lower=0,
+            strict=True,
+        )
+        if any(v > limit or abs(d) > v for v, limit, d in zip(vmax, limits, dq)):
+            raise ValueError("Joint velocity exceeds the command or controller limit")
+        with self._control():
+            self._switch_mode(self.mode.NRT_JOINT_IMPEDANCE if impedance else self.mode.NRT_JOINT_POSITION)
+            self.robot.SendJointPosition(q, dq, vmax, amax)
+
+    @staticmethod
+    def _frame_name(frame):
+        if not isinstance(frame, str) or frame.upper() not in ("WORLD", "TCP"):
+            raise ValueError("frame must be WORLD or TCP")
+        return frame.upper()
+
+    def configure_force_control(
+        self,
+        axes,
+        *,
+        frame="WORLD",
+        frame_transform=None,
+        passive=False,
+        max_linear_velocity=None,
+        contact_wrench=None,
+    ):
+        """Configure once before sending hybrid/force commands.
+
+        Axes: [X,Y,Z,Rx,Ry,Rz]. True selects explicit force/moment control.
+        Active control is closed-loop; passive is open-loop wrench feedforward.
+        Mode changes discard this wrapper's configuration: configure again afterwards.
+        """
+        axes = list(axes)
+        if len(axes) != 6 or any(type(a) is not bool for a in axes):
+            raise ValueError("axes must contain exactly six booleans")
+        frame = self._frame_name(frame)
+        if type(passive) is not bool:
+            raise ValueError("passive must be a boolean")
+        transform = Pose([0, 0, 0], [0, 0, 0, 1]) if frame_transform is None else frame_transform
+        if not isinstance(transform, Pose):
+            raise TypeError("frame_transform must be a Pose in the root frame")
+        transform = transform.to_rdk()
+        vmax = vector(
+            self.config.force_axis_max_linear_velocity
+            if max_linear_velocity is None
+            else max_linear_velocity,
+            3,
+            "force-axis velocity",
+            lower=0.005,
+            upper=2.0,
+        )
+        limits = vector(
+            self.config.max_contact_wrench if contact_wrench is None else contact_wrench,
+            6,
+            "contact_wrench",
+            lower=0,
+            allow_inf=True,
+        )
+        if any(axes[3:]) and any(np.isfinite(limits)):
+            raise ValueError("Moment control cannot use contact-wrench regulation; explicitly pass [inf]*6")
+        with self._control():
+            # RDK requires IDLE for changing passive force control, even when false.
+            self.stop()
+            self._check_ready()
+            self.robot.SetPassiveForceControl(passive)
+            self._switch_mode(self.mode.NRT_CARTESIAN_MOTION_FORCE)
+            self.robot.SetForceControlAxis([False] * 6, vmax)
+            self.robot.SetMaxContactWrench(limits)
+            self.robot.SetForceControlFrame(getattr(self.rdk.CoordType, frame), transform)
+            self.robot.SetForceControlAxis(axes, vmax)
+            self._force_axes, self._force_frame, self._contact_wrench = axes, frame, limits
+            self._passive_force = passive
+
+    def _require_cartesian(self):
+        self._check_ready()
+        if self.robot.mode() != self.mode.NRT_CARTESIAN_MOTION_FORCE or self._force_axes is None:
+            raise RuntimeError("Call configure_force_control() before Cartesian force/impedance commands")
+
+    def set_cartesian_impedance(self, stiffness=None, damping_ratio=None):
+        """Stiffness [N/m,Nm/rad], damping ratio [0.3,0.8]; None restores nominal."""
+        nominal = self.robot.info().K_x_nom
+        stiffness = vector(nominal if stiffness is None else stiffness, 6, "stiffness", lower=0)
+        if any(k > n for k, n in zip(stiffness, nominal)):
+            raise ValueError("Cartesian stiffness exceeds K_x_nom")
+        damping = vector(
+            [0.7] * 6 if damping_ratio is None else damping_ratio, 6, "damping", lower=0.3, upper=0.8
+        )
+        with self._control():
+            self._require_cartesian()
+            self.robot.SetCartesianImpedance(stiffness, damping)
+
+    def set_joint_impedance(self, stiffness=None, damping_ratio=None):
+        """Enter NRT joint impedance mode; stiffness Nm/rad, damping ratio [0.3,0.8]."""
+        nominal = self.robot.info().K_q_nom
+        stiffness = vector(nominal if stiffness is None else stiffness, 7, "stiffness", lower=0)
+        if any(k > n for k, n in zip(stiffness, nominal)):
+            raise ValueError("Joint stiffness exceeds K_q_nom")
+        damping = vector(
+            [0.7] * 7 if damping_ratio is None else damping_ratio, 7, "damping", lower=0.3, upper=0.8
+        )
+        with self._control():
+            self._switch_mode(self.mode.NRT_JOINT_IMPEDANCE)
+            self.robot.SetJointImpedance(stiffness, damping)
+
+    def set_max_contact_wrench(self, wrench):
+        """Limit motion-controlled axes only; this is not a global collision detector."""
+        limits = vector(wrench, 6, "contact_wrench", lower=0, allow_inf=True)
+        self._require_cartesian()
+        if any(self._force_axes[3:]) and any(np.isfinite(limits)):
+            raise ValueError("Moment control cannot use contact-wrench regulation")
+        with self._control():
+            self.robot.SetMaxContactWrench(limits)
+            self._contact_wrench = limits
+
+    def set_max_contact_torque(self, torques):
+        limits = vector(torques, 7, "contact torques", lower=0, allow_inf=True)
+        with self._control():
+            self._check_ready()
+            if self.robot.mode() != self.mode.NRT_JOINT_IMPEDANCE:
+                raise RuntimeError("Contact torque regulation requires NRT_JOINT_IMPEDANCE")
+            self.robot.SetMaxContactTorque(limits)
+
+    def set_null_space_posture(self, joint_values):
+        q = self._joints(joint_values)
+        with self._control():
+            self._require_cartesian()
+            self.robot.SetNullSpacePosture(q)
+
+    def set_null_space_objectives(self, linear=0.0, angular=0.0, tracking=0.5):
+        values = vector([linear, angular, tracking], 3, "null-space weights", lower=0, upper=1)
+        if values[2] < 0.1:
+            raise ValueError("tracking must be in [0.1, 1]")
+        with self._control():
+            self._require_cartesian()
+            self.robot.SetNullSpaceObjectives(*values)
+
+    def _cartesian_arguments(
+        self, pose, wrench, velocity, max_linear_vel, max_angular_vel, max_linear_acc, max_angular_acc
+    ):
+        if not isinstance(pose, Pose):
+            raise TypeError("goal_pose must be a Pose (quaternion xyzw)")
+        return (
+            pose.to_rdk(),
+            vector(wrench, 6, "wrench"),
+            vector([0.0] * 6 if velocity is None else velocity, 6, "velocity"),
+            positive(
+                self.config.max_linear_vel if max_linear_vel is None else max_linear_vel, "max_linear_vel"
+            ),
+            positive(
+                self.config.max_angular_vel if max_angular_vel is None else max_angular_vel, "max_angular_vel"
+            ),
+            positive(
+                self.config.max_linear_acc if max_linear_acc is None else max_linear_acc, "max_linear_acc"
+            ),
+            positive(
+                self.config.max_angular_acc if max_angular_acc is None else max_angular_acc, "max_angular_acc"
+            ),
+        )
+
+    def move_eef_to_goal_pose(
+        self,
+        goal_pose,
+        max_linear_vel=None,
+        max_angular_vel=None,
+        *,
+        velocity=None,
+        max_linear_acc=None,
+        max_angular_acc=None,
+    ):
+        """Pure motion; explicitly disable all force axes and passive force mode."""
+        args = self._cartesian_arguments(
+            goal_pose, [0.0] * 6, velocity, max_linear_vel, max_angular_vel, max_linear_acc, max_angular_acc
+        )
+        with self._control():
+            if (
+                self._force_axes != [False] * 6
+                or self._passive_force is not False
+                or self.robot.mode() != self.mode.NRT_CARTESIAN_MOTION_FORCE
+            ):
+                self.configure_force_control([False] * 6)
+            self._require_cartesian()
+            self.robot.SendCartesianMotionForce(*args)
+
+    def move_eef_to_goal_pose_wrench(
+        self,
+        goal_pose,
+        wrench,
+        max_linear_vel=None,
+        max_angular_vel=None,
+        contact_wrench=None,
+        *,
+        velocity=None,
+        max_linear_acc=None,
+        max_angular_acc=None,
+    ):
+        """Send hybrid control after configure_force_control.
+
+        Wrench is the desired force sensed at TCP, not force exerted by TCP:
+        WORLD Fz=+5 N presses toward world -Z. Non-force axes must have zero wrench.
+        """
+        args = self._cartesian_arguments(
+            goal_pose, wrench, velocity, max_linear_vel, max_angular_vel, max_linear_acc, max_angular_acc
+        )
+        self._require_cartesian()
+        if any(w != 0 and not enabled for w, enabled in zip(args[1], self._force_axes)):
+            raise ValueError("Nonzero wrench requires explicitly enabled force-control axes")
+        with self._control():
+            if contact_wrench is not None:
+                self.set_max_contact_wrench(contact_wrench)
+            self.robot.SendCartesianMotionForce(*args)
+
+    def rotate_eef_tcp(self, axis, angle):
+        if axis not in ("x", "y", "z") or not np.isfinite(angle):
+            raise ValueError("axis must be x/y/z and angle finite radians")
+        pose = self.get_current_eef_pose()
+        rotation = Rotation.from_quat(pose.orientation) * Rotation.from_euler(axis, angle)
+        self.move_eef_to_goal_pose(Pose(pose.position, rotation.as_quat()))
+
+    def rotate_eef_joint(self, angle):
+        q = self.get_current_joint_values()
+        q[-1] += float(angle)
+        self.move_arm_to_joint_values(q)
+
+    def _wait(self, predicate, timeout):
+        deadline = time.monotonic() + positive(timeout, "timeout")
+        with self._control():
+            while True:
+                self._check_ready()
+                if predicate(self.update_robot_states()):
+                    return True
+                if time.monotonic() >= deadline:
+                    self.stop()
+                    return False
+                time.sleep(1.0 / self.frequency)
+
+    def wait_for_joints(self, target_joint_values, error_threshold=0.01, speed_threshold=0.01, timeout=30.0):
+        target = np.array(self._joints(target_joint_values))
+        error_threshold = positive(error_threshold, "error_threshold")
+        speed_threshold = positive(speed_threshold, "speed_threshold")
+        return self._wait(
+            lambda s: (
+                np.max(np.abs(np.array(s.q) - target)) <= error_threshold
+                and np.max(np.abs(s.dq)) <= speed_threshold
+            ),
+            timeout,
+        )
+
+    def wait_for_eef(
+        self,
+        target_tcp_pose,
+        position_error_threshold=0.003,
+        timeout=30.0,
+        *,
+        orientation_error_threshold=0.02,
+        linear_velocity_threshold=0.01,
+        angular_velocity_threshold=0.02,
+    ):
+        if not isinstance(target_tcp_pose, Pose):
+            raise TypeError("target_tcp_pose must be Pose")
+        if self._force_axes and any(self._force_axes):
+            raise RuntimeError("Pose convergence is not defined for force-controlled axes")
+        limits = vector(
+            [
+                position_error_threshold,
+                orientation_error_threshold,
+                linear_velocity_threshold,
+                angular_velocity_threshold,
+            ],
+            4,
+            "thresholds",
+            lower=0,
+            strict=True,
+        )
+
+        def reached(states):
+            actual = Pose.from_rdk(states.tcp_pose)
+            return (
+                np.linalg.norm(np.array(actual.position) - target_tcp_pose.position) <= limits[0]
+                and self.compute_orientation_error(actual.orientation, target_tcp_pose.orientation)
+                <= limits[1]
+                and np.linalg.norm(states.tcp_vel[:3]) <= limits[2]
+                and np.linalg.norm(states.tcp_vel[3:]) <= limits[3]
             )
-            orientation_error = np.linalg.norm(
-                np.array(goal_orientation)
-                - np.array(actual_pose.get_orientation(type="quaternion"))
-            )
 
-            total_error = position_error + orientation_error
-            self.log.info(f"Calculated IK error. Position error: {position_error}, Orientation error: {orientation_error}.")
-            return total_error
-        except Exception as e:
-            self.log.error(f"Failed to calculate IK error: {str(e)}")
-            raise
+        return self._wait(reached, timeout)
 
-    # ----------------------------------------------------------------
-    # Gripper Functions
-    # ----------------------------------------------------------------
+    @staticmethod
+    def compute_orientation_error(current_orientation, target_orientation):
+        current = Rotation.from_quat(current_orientation)
+        target = Rotation.from_quat(target_orientation)
+        return float((target * current.inv()).magnitude())
+
+    def _tool_matrix(self):
+        return Pose.from_rdk(self.config.flange_to_tcp).as_matrix()
+
+    def joints_to_cartesian(self, joint_values):
+        """Offline FK in robot base frame using the configured flange-to-TCP transform.
+
+        It equals RDK WORLD only if the controller world/base transform is identity.
+        This kinematic URDF has blurred dynamics; do not use it for torque control.
+        """
+        q = self._joints(joint_values)
+        matrix = self.robot_chain.forward_kinematics([0.0] + q + [0.0]) @ self._tool_matrix()
+        return Pose(matrix[:3, 3], matrix[:3, :3])
+
+    def cartesian_to_joints(self, pose, initial_joint_values=None):
+        if not isinstance(pose, Pose):
+            raise TypeError("pose must be Pose in robot base frame")
+        seed = self.get_current_joint_values() if initial_joint_values is None else initial_joint_values
+        if len(seed) == 9:  # Legacy full-chain input, strip fixed links before checking.
+            seed = seed[1:8]
+        seed = self._joints(seed)
+        flange = pose.as_matrix() @ np.linalg.inv(self._tool_matrix())
+        full = self.robot_chain.inverse_kinematics_frame(
+            flange, initial_position=[0.0] + seed + [0.0], orientation_mode="all"
+        )
+        q = self._joints(full[1:8])
+        result = self.joints_to_cartesian(q)
+        if (
+            np.linalg.norm(np.array(result.position) - pose.position) > 0.003
+            or self.compute_orientation_error(result.orientation, pose.orientation) > 0.02
+        ):
+            raise ValueError("IK did not converge to the requested pose")
+        return q
+
+    def calculate_IK_error(self, goal_position, goal_orientation):
+        target = Pose(goal_position, goal_orientation)
+        actual = self.joints_to_cartesian(self.cartesian_to_joints(target))
+        return float(
+            np.linalg.norm(np.array(actual.position) - target.position)
+            + self.compute_orientation_error(actual.orientation, target.orientation)
+        )
 
     def find_gripper(self):
-        """
-        Searches for the gripper on available serial ports and returns the port if found.
+        """List a likely USB serial port without writing to unrelated serial devices."""
+        from serial.tools import list_ports
 
-        Returns:
-            str: The serial port where the gripper is connected, or None if not found.
-        """
-        ports = [f"/dev/ttyS{i}" for i in range(2)] + [
-            f"/dev/ttyUSB{i}" for i in range(2)
-        ]
+        ports = [p.device for p in list_ports.comports() if "USB" in p.device or "usb" in p.device]
+        if len(ports) != 1:
+            raise RuntimeError("Specify connect_gripper(port=...) when USB port is absent or ambiguous")
+        return ports[0]
 
-        for port in ports:
-            try:
-                print(f"Trying port: {port}")
-                ser = serial.Serial(port, baudrate=115200, timeout=1.0)
-                device = mm.Instrument(ser, 9, mode=mm.MODE_RTU)
-                device.write_registers(1000, [0, 100, 0])
-                registers = device.read_registers(2000, 3, 4)
-                posRequestEchoReg3 = registers[1] & 0b0000000011111111
+    def connect_gripper(self, port=None):
+        import pyRobotiqGripper
 
-                if posRequestEchoReg3 == 100:
-                    print(f"Gripper found on port: {port}")
-                    return port
-            except Exception as e:
-                print(f"Port {port} is not the gripper: {e}")
-            finally:
-                # Ensure the serial port is closed after each attempt
-                if "ser" in locals() and ser.is_open:
-                    ser.close()
-
-        return None
-
-    def connect_gripper(self):
-        """
-        Connects to the gripper and activates it if necessary.
-        """
-        try:
-            gripper_port = self.find_gripper()
-            if gripper_port:
-                self.gripper = pyRobotiqGripper.RobotiqGripper(portname=gripper_port)
-                self.log.info(f"Connected to gripper on port {self.gripper.portname}.")
-
-                if not self.gripper.isActivated():
-                    self.log.info("Activating gripper...")
-                    self.gripper.activate()
-            else:
-                self.log.error("Failed to connect to the gripper. No port detected.")
-        except Exception as e:
-            self.log.error(f"Failed to connect to gripper: {str(e)}")
+        self.gripper = pyRobotiqGripper.RobotiqGripper(portname=port or self.find_gripper())
+        if not self.gripper.isActivated():
+            self.gripper.activate()
+        return self.gripper
 
     def gripper_goto(self, value, speed=255, force=255):
-        """
-        Moves the gripper to a specified position with given speed and force.
-
-        Args:
-            value (int): Position of the gripper (0: open, 255: closed).
-            speed (int): Speed of the gripper movement (0-255).
-            force (int): Force applied by the gripper (0-255).
-        """
-        try:
-            if self.gripper:
-                self.gripper.goTo(position=value, speed=speed, force=force)
-                self.log.info(
-                    f"Gripper moved to position {value} with speed {speed} and force {force}."
-                )
-            else:
-                self.log.error("Gripper not connected. Call connect_gripper() first.")
-        except Exception as e:
-            self.log.error(f"Failed to move gripper: {str(e)}")
+        values = [value, speed, force]
+        if any(type(v) is not int or not 0 <= v <= 255 for v in values):
+            raise ValueError("Gripper position, speed and force must be integers in [0,255]")
+        if self.gripper is None:
+            raise RuntimeError("Call connect_gripper first")
+        self.gripper.goTo(position=value, speed=speed, force=force)
 
     def open_gripper(self, speed=255, force=255):
-        """
-        Opens the gripper to its maximum position with specified speed and force.
-
-        Args:
-            speed (int): Speed of the gripper movement (0-255). Default is 255.
-            force (int): Force applied by the gripper (0-255). Default is 255.
-        """
-        try:
-            self.gripper_goto(value=0, speed=speed, force=force)
-            self.log.info(f"Opened gripper with speed={speed} and force={force}.")
-        except Exception as e:
-            self.log.error(f"Failed to open gripper: {str(e)}")
+        self.gripper_goto(0, speed, force)
 
     def close_gripper(self, speed=255, force=255):
-        """
-        Closes the gripper to its minimum position with specified speed and force.
-
-        Args:
-            speed (int): Speed of the gripper movement (0-255). Default is 255.
-            force (int): Force applied by the gripper (0-255). Default is 255.
-        """
-        try:
-            self.gripper_goto(value=255, speed=speed, force=force)
-            self.log.info(f"Closed gripper with speed={speed} and force={force}.")
-        except Exception as e:
-            self.log.error(f"Failed to close gripper: {str(e)}")
-
-    # ----------------------------------------------------------------
-    # Other Functions
-    # ----------------------------------------------------------------
-    def wait_for_joints(self, target_joint_values, error_threshold=0.01, speed_threshold=0.01, timeout=0.3):
-        # DONE
-        """
-        Waits until the robot's motion is completed by checking the error between current and target joint values
-        and monitoring joint speeds.
-
-        Args:
-            target_joint_values (list[float]): The target joint values (in radians).
-            error_threshold (float): The allowable error threshold for each joint (in radians). Default is 0.01 rad.
-            speed_threshold (float): The allowable speed threshold for each joint (in rad/s). Default is 0.01 rad/s.
-            timeout (int): The maximum time to wait for completion (in seconds). Default is 10 seconds.
-
-        Returns:
-            bool: True if motion is completed within timeout, False otherwise.
-        """
-        start_time = rospy.get_time()
-        while rospy.get_time() - start_time < timeout:
-            self.update_robot_states()
-            current_joint_values = self.robot_states.q
-            current_joint_speeds = self.robot_states.dq
-
-            errors = [
-                abs(c - t) for c, t in zip(current_joint_values, target_joint_values)
-            ]
-            if all(error <= error_threshold for error in errors) and all(
-                abs(speed) <= speed_threshold for speed in current_joint_speeds
-            ):
-                rospy.loginfo("Motion completed successfully.")
-                return True  # Exit on success
-
-            rospy.sleep(0.002)  # Check every 5ms
-
-        rospy.logerr("Timeout reached.")
-        return False  # Timeout occurred
-
-    def wait_for_eef(self, target_tcp_pose, position_error_threshold=0.03, timeout=0.2):
-        # DONE
-        """
-        Waits until the robot's motion is completed by checking the error between current and target tcp pose
-        and monitoring tcp velocities.
-
-        Args:
-            target_tcp_pose (Pose): The target tcp pose (position and orientation in quaternion format).
-            position_error_threshold (float): The allowable position error threshold (in meters). Default is 0.01 m.
-            orientation_error_threshold (float): The allowable orientation error threshold (in radians). Default is 0.01 rad.
-            velocity_threshold (float): The allowable velocity threshold for the tcp (in m/s for linear and rad/s for angular). Default is 0.01 rad/s.
-            timeout (int): The maximum time to wait for completion (in seconds). Default is 0.2 seconds.
-
-        Returns:
-            bool: True if motion is completed within timeout, False otherwise.
-        """
-        position = target_tcp_pose.get_position()
-        orientation = target_tcp_pose.get_orientation(type="quaternion")
-        target_tcp_pose = position + orientation  # Combine position and orientation
-
-        print(f"target_tcp_pose:{target_tcp_pose}")
-
-        start_time = rospy.get_time()
-        while rospy.get_time() - start_time < timeout:
-            self.update_robot_states()
-            current_tcp_pose = self.robot_states.tcpPose
-            
-            # Compute position error (Euclidean distance between position vectors)
-            position_error = np.linalg.norm(
-                np.array(current_tcp_pose[:3]) - np.array(target_tcp_pose[:3])
-            )
-
-            # Check if position errors are within threshold and velocities are below threshold
-            if position_error <= position_error_threshold:
-                rospy.loginfo("Motion completed successfully.")
-                return True
-            
-            rospy.sleep(0.01)  # Check every 10ms
-
-        rospy.logerr("Timeout reached.")
-        return False  # Timeout occurred
-
-    def compute_orientation_error(self, current_orientation, target_orientation):
-        # TODO
-        """
-        Compute the orientation error between two quaternions.
-        """
-        # Convert quaternions to rotation matrices or use quaternion distance
-        q_current = np.array(current_orientation)
-        q_target = np.array(target_orientation)
-
-        # Compute quaternion distance (angle)
-        dot_product = np.dot(q_current, q_target)
-        angle = 2 * np.arccos(
-            np.clip(dot_product, -1.0, 1.0)
-        )  # Returns the angle in radians
-        return angle
+        self.gripper_goto(255, speed, force)

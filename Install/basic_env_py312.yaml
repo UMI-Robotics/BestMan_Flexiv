@@ -1,0 +1,11 @@
+name: bestman-flexiv
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - flexivrdk==1.9.4.1
+      - numpy
+      - scipy
+      - ikpy

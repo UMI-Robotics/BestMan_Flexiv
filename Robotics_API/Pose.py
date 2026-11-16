@@ -1,101 +1,67 @@
-# !/usr/bin/env python
-# -*- encoding: utf-8 -*-
-"""
-# @FileName       : Pose.py
-# @Time           : 2024-08-03 15:08:38
-# @Author         : yk
-# @Email          : yangkui1127@gmail.com
-# @Description:   : POse
-"""
-
+"""Pose with explicit quaternion conventions: public xyzw, RDK boundary wxyz."""
 
 import numpy as np
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation
 
 
 class Pose:
-    """
-    A class representing a 3D pose consisting of position and orientation.
-    """
+    """Position in metres; orientation as xyzw quaternion, xyz Euler radians or 3x3 matrix."""
 
     def __init__(self, position, orientation):
-        """
-        Initialize a new Pose object.
-
-        Args:
-            position (list / np.ndarray): A list or array of three floats representing the position in 3D space.
-            orientation (list, tuple, np.ndarray): A list, tuple, or array representing the orientation in 3D space.
-                It can be either Euler angles (3 elements), a quaternion (4 elements), or a 3x3 rotation matrix.
-        """
-
-        self.position = list(position)
-        self.x, self.y, self.z = position
-
-        # Rotation matrix
-        if isinstance(orientation, np.ndarray) and orientation.shape == (3, 3):
-            r = R.from_matrix(orientation)
-            self.orientation = list(r.as_quat())
-        # Quaternion
-        elif (
-            isinstance(orientation, (tuple, list, np.ndarray)) and len(orientation) == 4
-        ):
-            self.orientation = list(orientation)
-        # Euler angles
-        elif (
-            isinstance(orientation, (tuple, list, np.ndarray)) and len(orientation) == 3
-        ):
-            r = R.from_euler("xyz", orientation, degrees=False)
-            self.orientation = list(r.as_quat())
+        p = np.asarray(position, dtype=float)
+        o = np.asarray(orientation, dtype=float)
+        if p.shape != (3,) or not np.isfinite(p).all() or not np.isfinite(o).all():
+            raise ValueError("Pose components must be finite; position must have length 3")
+        if o.shape == (4,):
+            if np.linalg.norm(o) < 1e-12:
+                raise ValueError("Quaternion must be nonzero")
+            r = Rotation.from_quat(o)
+        elif o.shape == (3,):
+            r = Rotation.from_euler("xyz", o)
+        elif o.shape == (3, 3):
+            if not np.allclose(o.T @ o, np.eye(3), atol=1e-6) or not np.isclose(
+                np.linalg.det(o), 1.0, atol=1e-6
+            ):
+                raise ValueError("Rotation matrix must be orthonormal with determinant +1")
+            r = Rotation.from_matrix(o)
         else:
-            raise ValueError(
-                "[Pose] \033[31merror\033[0m: Orientation input must be Rotation matrix / Quaternion / Euler angles"
-            )
+            raise ValueError("orientation must be xyzw quaternion, xyz Euler radians or 3x3 rotation matrix")
+        self.position = p.tolist()
+        self.x, self.y, self.z = self.position
+        self.orientation = r.as_quat().tolist()
+
+    @classmethod
+    def from_rdk(cls, pose):
+        values = np.asarray(pose, dtype=float)
+        if values.shape != (7,):
+            raise ValueError("RDK pose must be [x,y,z,qw,qx,qy,qz]")
+        return cls(values[:3], values[[4, 5, 6, 3]])
+
+    def to_rdk(self):
+        # Revalidate in case a caller has modified the public attributes.
+        checked = Pose(self.position, self.orientation)
+        x, y, z, w = checked.orientation
+        return checked.position + [w, x, y, z]
 
     def get_position(self):
-        """
-        get position
-
-        Returns:
-            list: position
-        """
-        return self.position
+        return self.position.copy()
 
     def get_orientation(self, type="quaternion"):
-        """
-        get orientation
-
-        Returns:
-            list: orientation
-        """
         if type == "quaternion":
-            return self.orientation
-        elif type == "euler":
-            return R.from_quat(self.orientation).as_euler("xyz", degrees=False)
-        elif type == "rotation_matrix":
-            return R.from_quat(self.orientation).as_matrix()
-        else:
-            raise ValueError(
-                "[Pose] \033[31merror\033[0m: Orientation type must be 'quaternion', 'euler', or 'rotation_matrix'"
-            )
+            return self.orientation.copy()
+        if type == "euler":
+            return Rotation.from_quat(self.orientation).as_euler("xyz")
+        if type == "rotation_matrix":
+            return Rotation.from_quat(self.orientation).as_matrix()
+        raise ValueError("type must be quaternion/euler/rotation_matrix")
+
+    def as_matrix(self):
+        matrix = np.eye(4)
+        matrix[:3, :3] = self.get_orientation("rotation_matrix")
+        matrix[:3, 3] = self.position
+        return matrix
 
     def print(self, pose_description="", type="quaternion"):
-        """
-        print pose
-        """
-        if type == "quaternion":
-            print(
-                f"[Pose] \033[34mInfo\033[0m: {pose_description} position: [{self.position[0]:.3f}, {self.position[1]:.3f}, {self.position[2]:.3f}], orientation: [{', '.join([f'{x:.3f}' for x in self.get_orientation('quaternion')])}]"
-            )
-        elif type == "euler":
-            print(
-                f"[Pose] \033[34mInfo\033[0m: {pose_description} position: [{self.position[0]:.3f}, {self.position[1]:.3f}, {self.position[2]:.3f}], orientation: [{', '.join([f'{x:.3f}' for x in self.get_orientation('euler')])}]"
-            )
-        elif type == "rotation_matrix":
-            np.set_printoptions(precision=3, suppress=True)
-            print(
-                f"[Pose] \033[34mInfo\033[0m: {pose_description} position: [{self.position[0]:.3f}, {self.position[1]:.3f}, {self.position[2]:.3f}], orientation: {np.array2string(self.get_orientation('rotation_matrix'), formatter={'float_kind':lambda x: f'{x:.3f}'})}"
-            )
-        else:
-            raise ValueError(
-                "[Pose] \033[31merror\033[0m: Orientation type must be 'quaternion', 'euler', or 'rotation_matrix'"
-            )
+        print(
+            f"{pose_description} position: {self.position}, orientation ({type}): {self.get_orientation(type)}"
+        )

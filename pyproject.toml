@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bestman-flexiv"
+version = "0.2.0"
+description = "Rizon 4 control with Flexiv RDK 1.9.4.1"
+requires-python = ">=3.10"
+dependencies = ["flexivrdk==1.9.4.1", "numpy>=1.24", "scipy>=1.10", "ikpy>=3.4,<5"]
+
+[project.optional-dependencies]
+gripper = ["pyRobotiqGripper", "pyserial", "minimalmodbus"]
+camera = ["pyrealsense2", "opencv-python"]
+dev = ["pytest>=7", "ruff>=0.9"]
+
+[tool.setuptools]
+packages = ["Robotics_API", "Asset", "Examples", "Sensor"]
+
+[tool.setuptools.package-data]
+Asset = ["flexiv_rizon4_kinematics.urdf"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+include = ["Robotics_API/*.py", "Examples/*.py", "tests/*.py"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
