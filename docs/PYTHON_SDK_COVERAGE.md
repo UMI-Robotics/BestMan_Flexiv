@@ -7,10 +7,16 @@ from C++ documentation. The Robot class exports **53 public methods/accessors**:
 
 ## What “servo” means in this Python interface
 
-The Python wheel exposes NRT modes and `SendJointPosition` / `SendCartesianMotionForce`.
+The Rizon-compatible 1.9.4.1 Python wheel exposes NRT modes and
+`SendJointPosition` / `SendCartesianMotionForce`.
 It does **not** export `StreamJointPosition`, `StreamJointTorque`,
 `StreamCartesianMotionForce`, `Scheduler`, or RT modes. Do not use a C++ API name
 as if it existed in Python. This remains true of the Linux wheel tested on 5090-02.
+
+This limitation must not be generalized to all versions: **official Python RDK
+2.1.0 exports the RT Stream methods and modes**, verified on macOS and Linux, but
+is for Enlight. See [the version-by-version probe](PYTHON_RT_PROBE.md). A Rizon 4
+Python application can alternatively use a separate compatible C++ RT backend.
 
 The servo methods send successive setpoints to the controller's internal motion
 generator. They return after dispatch, without waiting for each target to be reached.

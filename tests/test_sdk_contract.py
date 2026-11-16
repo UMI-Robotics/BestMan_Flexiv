@@ -105,7 +105,8 @@ def test_entire_python_robot_inventory_is_documented_and_accounted_for():
     assert actual - called == {"Brake", "LockExternalAxes", "SyncWithPositioner", "SetTimelinessFailureLimit"}
 
 
-def test_python_binding_has_no_realtime_streaming_or_servo_on_api():
+def test_rizon_1_9_4_1_binding_excludes_rt_and_servo_on_api():
+    assert version("flexivrdk") == "1.9.4.1"  # RDK 2.1.0 DOES export RT methods/modes.
     for name in (
         "StreamJointPosition",
         "StreamJointTorque",

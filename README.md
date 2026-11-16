@@ -94,9 +94,11 @@ python -m Examples.sdk_status Rizon4-123456
 ```
 
 The Python RDK 1.9.4.1 wheel exposes NRT `Send*` calls, **not** RT `Stream*` calls or
-RT modes. Use the official C++ SDK for 1 kHz real-time control. `Enable()` is the
-Rizon motor-enable API; this version has no Python `ServoOn()`/`Disable()` robot API,
-and `Brake()` is restricted to medical models.
+RT modes. This is version-specific: **Python RDK 2.1.0 does export RT calls**, but it
+supports Enlight, not this Rizon 4 profile. See the [actual binary probe results](docs/PYTHON_RT_PROBE.md).
+For Rizon 4 on 1.9.4.1, RT execution requires a compatible C++ backend, which can
+also be exposed to Python. `Enable()` is the Rizon motor-enable API; this version
+has no Python `ServoOn()`/`Disable()` robot API, and `Brake()` is restricted to medical models.
 
 The [SDK coverage guide](docs/PYTHON_SDK_COVERAGE.md) accounts for all 53 Python Robot
 members: 49 covered, four excluded for the Rizon 4/NRT profile. It also documents
