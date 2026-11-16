@@ -83,3 +83,55 @@ def test_example_help_works_without_ros_gripper_or_robot(name):
     )
     assert result.returncode == 0, result.stderr
     assert "usage:" in result.stdout
+
+
+def test_entire_python_robot_inventory_is_documented_and_accounted_for():
+    doc = (ROOT / "docs/PYTHON_SDK_COVERAGE.md").read_text()
+    section = doc.split("## Robot API inventory\n", 1)[1].split("\n## ", 1)[0]
+    documented = set(re.findall(r"^\| `([A-Za-z_]+)` \|", section, re.M))
+    actual = {name for name in dir(flexivrdk.Robot) if not name.startswith("_")}
+    assert documented == actual
+    tree = ast.parse((ROOT / "Robotics_API/Bestman_Real_Flexiv.py").read_text())
+    called = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Attribute)
+        and isinstance(node.func.value.value, ast.Name)
+        and node.func.value.value.id == "self"
+        and node.func.value.attr == "robot"
+    }
+    assert actual - called == {"Brake", "LockExternalAxes", "SyncWithPositioner", "SetTimelinessFailureLimit"}
+
+
+def test_python_binding_has_no_realtime_streaming_or_servo_on_api():
+    for name in (
+        "StreamJointPosition",
+        "StreamJointTorque",
+        "StreamCartesianMotionForce",
+        "ServoOn",
+        "Disable",
+    ):
+        assert not hasattr(flexivrdk.Robot, name)
+    assert not any(name.startswith("RT_") for name in dir(flexivrdk.Mode))
+    assert not hasattr(flexivrdk, "Scheduler")
+
+
+@pytest.mark.parametrize(
+    "method,arguments",
+    [
+        ("SendMultiCartesianMotionForce", ["self", "cart_cmds", "joint_pos"]),
+        ("SetJointInertiaScale", ["self", "inertia_scales"]),
+        ("SetDigitalOutputs", ["self", "digital_outputs"]),
+        ("SetGlobalVariables", ["self", "global_vars"]),
+        ("PausePlan", ["self", "toggle"]),
+        ("SetBreakpointMode", ["self", "is_enabled"]),
+        ("SetVelocityScale", ["self", "velocity_scale"]),
+        ("ClearFault", ["self", "timeout_sec"]),
+        ("ExecutePrimitive", ["self", "primitive_name", "input_params", "block_until_started"]),
+    ],
+)
+def test_additional_sdk_command_signatures(method, arguments):
+    signature = getattr(flexivrdk.Robot, method).__doc__.splitlines()[0]
+    assert re.findall(r"\b(\w+): ", signature) == arguments

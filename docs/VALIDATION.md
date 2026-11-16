@@ -89,3 +89,30 @@ save followed by replay with exactly the original SDK-order values.
 
 These are interface and offline kinematic tests. The hardware/simulation limitations
 above are unchanged.
+
+## 0.3.0 — servo helpers and Python SDK alignment
+
+- macOS / Python 3.12.13: **130 passed**, 3.00s.
+- 5090-02 isolated Linux / Python 3.12.14: **130 passed**, 8.47s.
+- Ruff, documentation link checks and `git diff --check`: passed.
+- The same IKPy fixed-link-mask FutureWarning remains.
+
+Both official 1.9.4.1 wheels expose the documented 53 Robot members. Tests account
+for 49 wrapped members and the four deliberate exclusions, and confirm that neither
+wheel exposes RT Stream* methods, RT modes, Scheduler, Robot.ServoOn or Robot.Disable.
+New command signatures and the native NrtCartesianCmd constructor are checked against
+the actual binary. Native service construction is tested with injected factories;
+service operations are not exercised on a controller.
+
+Added regressions cover bounded servo scheduling, skipped missed periods without
+command bursts, mode reuse, wxyz/velocity/wrench forwarding, connection loss,
+callback errors and Ctrl+C, lag detection, and stopping on invalid servo targets even
+without the loop helper. They also cover the new servo/status examples, measured
+force aborts, multi-waypoint mode/shape/axis checks, asynchronous primitive states,
+plan options/pause/breakpoints, IO bounds, inertia/contact-torque limits, recovery-state
+requirements, native service arguments, and tool/work-coordinate management.
+
+No robot was enabled or moved. These results validate API contracts, control flow and
+offline behavior, not actual servo tracking, real-time timing, stopping distance,
+force tracking, physical IO, recovery, calibration or safety-controller operations.
+The existing DJ-Sim/DJ-demo environments were not modified.

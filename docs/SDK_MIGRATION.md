@@ -62,7 +62,8 @@ legacy input with a deprecation warning, because the new NRT API has no such fie
 Units: joint angle rad, Cartesian position m, wrench N/Nm, joint stiffness Nm/rad,
 Cartesian stiffness N/m and Nm/rad; damping inputs are dimensionless ratios, not
 physical damping coefficients. All command vectors must be finite except deliberate
-positive infinity in contact limits. Positive WORLD Fz commands motion toward WORLD
+positive infinity in Cartesian contact-wrench limits. Joint contact-torque limits
+must be finite and no greater than `RobotInfo.tau_max`. Positive WORLD Fz commands motion toward WORLD
 -Z until the environment applies the requested positive sensed force.
 
 Motion poses always use WORLD. Force uses WORLD or moving TCP, optionally with a
@@ -111,3 +112,13 @@ the official C++ scheduler/RT API; no misleading Python torque loop is provided.
 `Demos/` and `TODO/` are archived applications tied to old ROS APIs and experiment
 calibrations. Only `Robotics_API`, `Examples`, configuration and installation paths
 are migrated. RealSense and serial gripper hardware behavior was not validated.
+
+
+## Servo and remaining Python API alignment (0.3.0)
+
+See [PYTHON_SDK_COVERAGE.md](PYTHON_SDK_COVERAGE.md) for the complete 53-member
+Robot inventory, NRT servo methods and timing behavior, onboard waypoint batches,
+asynchronous primitive/plan control, IO/global variables, and native service access.
+The four exclusions are medical-only brakes, two external-axis/positioner operations,
+and the RT-only timeliness setting. No RT Stream* methods or RT modes are exported
+by the tested Python wheel. All pose/servo/waypoint data remains raw wxyz.

@@ -174,7 +174,7 @@ def test_wait_rejects_force_axes(arm):
 
 def test_zero_sensor_dictionary_and_primitive_timeout(arm, backend):
     arm.zero_force_torque_sensors()
-    assert backend.events[-1] == ("ExecutePrimitive", "ZeroFTSensor", {})
+    assert backend.events[-1] == ("ExecutePrimitive", "ZeroFTSensor", {}, True)
     backend.terminated = False
     with pytest.raises(TimeoutError):
         arm.zero_force_torque_sensors(timeout=0.001)
@@ -183,7 +183,7 @@ def test_zero_sensor_dictionary_and_primitive_timeout(arm, backend):
 
 def test_home_uses_plan_and_plan_timeout(arm, backend):
     arm.go_home()
-    assert backend.events[-1] == ("ExecutePlan", "PLAN-Home")
+    assert backend.events[-1] == ("ExecutePlan", "PLAN-Home", False, True)
     backend.plan_busy = True
     with pytest.raises(TimeoutError):
         arm.go_home(timeout=0.001)

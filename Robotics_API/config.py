@@ -3,6 +3,7 @@
 import json
 import math
 from dataclasses import dataclass
+from numbers import Integral
 from pathlib import Path
 
 
@@ -27,6 +28,17 @@ def pose_vector(values, name="pose"):
     if not math.isclose(norm, 1.0, rel_tol=0.0, abs_tol=1e-3):
         raise ValueError(f"{name} quaternion [qw,qx,qy,qz] must have unit norm")
     return result
+
+
+def integer(value, name, *, lower, upper=None):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, Integral)
+        or value < lower
+        or (upper is not None and value > upper)
+    ):
+        raise ValueError(f"{name} must be an integer in the allowed range")
+    return int(value)
 
 
 def positive(value, name):

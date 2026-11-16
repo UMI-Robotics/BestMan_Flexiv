@@ -17,6 +17,9 @@ class RecordingRobot:
         self.fail_send = False
         self.terminated = True
         self.plan_busy = False
+        self.needs_recovery = False
+        self.digital_values = {}
+        self.variables = {"test_value": 1}
         self.state = SimpleNamespace(
             q=[0.0] * 7,
             dq=[0.0] * 7,
@@ -39,6 +42,7 @@ class RecordingRobot:
             dq_max=[2.0] * 7,
             K_x_nom=[1000.0] * 3 + [100.0] * 3,
             K_q_nom=[100.0] * 7,
+            tau_max=[80.0] * 7,
         )
 
     def info(self):
@@ -62,8 +66,8 @@ class RecordingRobot:
     def primitive_states(self):
         return {"terminated": self.terminated}
 
-    def ClearFault(self):
-        self.events.append(("ClearFault",))
+    def ClearFault(self, timeout_sec=30):
+        self.events.append(("ClearFault", timeout_sec))
         self.has_fault = False
         return True
 
@@ -83,7 +87,7 @@ class RecordingRobot:
         self.events.append(("SetPassiveForceControl", is_enabled))
 
     def _cartesian(self):
-        assert self.mode() == flexivrdk.Mode.NRT_CARTESIAN_MOTION_FORCE
+        assert self.mode() in (flexivrdk.Mode.NRT_CARTESIAN_MOTION_FORCE, flexivrdk.Mode.NRT_SUPER_PRIMITIVE)
 
     def SetForceControlFrame(self, root_coord, T_in_root):
         self._cartesian()
@@ -142,13 +146,99 @@ class RecordingRobot:
             ("SetNullSpaceObjectives", linear_manipulability, angular_manipulability, ref_positions_tracking)
         )
 
-    def ExecutePrimitive(self, primitive_name, input_params):
+    def ExecutePrimitive(self, primitive_name, input_params, block_until_started=True):
         assert self.mode() == flexivrdk.Mode.NRT_PRIMITIVE_EXECUTION
-        self.events.append(("ExecutePrimitive", primitive_name, input_params))
+        self.events.append(("ExecutePrimitive", primitive_name, input_params, block_until_started))
 
-    def ExecutePlan(self, name):
+    def ExecutePlan(self, name, continue_exec=False, block_until_started=True):
         assert self.mode() == flexivrdk.Mode.NRT_PLAN_EXECUTION
-        self.events.append(("ExecutePlan", name))
+        self.events.append(("ExecutePlan", name, continue_exec, block_until_started))
+
+    def SendMultiCartesianMotionForce(self, cart_cmds, joint_pos):
+        assert self.mode() == flexivrdk.Mode.NRT_SUPER_PRIMITIVE
+        self.events.append(("SendMultiCartesianMotionForce", cart_cmds, joint_pos))
+
+    def SetJointInertiaScale(self, inertia_scales):
+        assert self.mode() == flexivrdk.Mode.NRT_JOINT_IMPEDANCE
+        self.events.append(("SetJointInertiaScale", inertia_scales))
+
+    def PausePlan(self, toggle):
+        assert self.mode() == flexivrdk.Mode.NRT_PLAN_EXECUTION
+        self.events.append(("PausePlan", toggle))
+
+    def StopPlan(self):
+        assert self.mode() == flexivrdk.Mode.NRT_PLAN_EXECUTION
+        self.events.append(("StopPlan",))
+        self.plan_busy = False
+
+    def SetBreakpointMode(self, is_enabled):
+        assert self.mode() == flexivrdk.Mode.NRT_PLAN_EXECUTION
+        self.events.append(("SetBreakpointMode", is_enabled))
+
+    def StepBreakpoint(self):
+        assert self.mode() == flexivrdk.Mode.NRT_PLAN_EXECUTION
+        self.events.append(("StepBreakpoint",))
+
+    def SetVelocityScale(self, velocity_scale):
+        assert self.mode() in (flexivrdk.Mode.NRT_PLAN_EXECUTION, flexivrdk.Mode.NRT_PRIMITIVE_EXECUTION)
+        self.events.append(("SetVelocityScale", velocity_scale))
+
+    def SetDigitalOutputs(self, digital_outputs):
+        self.digital_values.update(digital_outputs)
+        self.events.append(("SetDigitalOutputs", digital_outputs))
+
+    def digital_inputs(self):
+        return [False] * 18
+
+    def global_variables(self):
+        return self.variables.copy()
+
+    def SetGlobalVariables(self, global_vars):
+        self.variables.update(global_vars)
+        self.events.append(("SetGlobalVariables", global_vars))
+
+    def connected(self):
+        return True
+
+    def stopped(self):
+        return self.mode() == flexivrdk.Mode.IDLE
+
+    def recovery(self):
+        return self.needs_recovery
+
+    def reduced(self):
+        return False
+
+    def estop_released(self):
+        return True
+
+    def enabling_button_pressed(self):
+        return False
+
+    def lite(self):
+        return False
+
+    def reached_timeliness_failure_limit(self):
+        return False
+
+    def operational_status(self):
+        return flexivrdk.OperationalStatus.READY
+
+    def actions(self):
+        return SimpleNamespace(tcp_pose_d=self.state.tcp_pose.copy())
+
+    def event_log(self):
+        return []
+
+    def plan_list(self):
+        return ["PLAN-Home", "user-plan"]
+
+    def plan_info(self):
+        return SimpleNamespace(waiting_for_step=False)
+
+    def RunAutoRecovery(self):
+        assert self.needs_recovery
+        self.events.append(("RunAutoRecovery",))
 
 
 @pytest.fixture

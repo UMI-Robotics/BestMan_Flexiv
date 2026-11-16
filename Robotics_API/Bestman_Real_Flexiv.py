@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 import warnings
+from collections.abc import Mapping
 from contextlib import contextmanager
 from importlib.metadata import version
 from pathlib import Path
@@ -12,7 +13,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .config import RobotConfig, pose_vector, positive, vector
+from .config import RobotConfig, integer, pose_vector, positive, vector
 
 
 class Bestman_Real_Flexiv:
@@ -83,6 +84,8 @@ class Bestman_Real_Flexiv:
         return [link for link in self.robot_chain.links if link.joint_type in ("revolute", "prismatic")]
 
     def _check_ready(self):
+        if not self.robot.connected():
+            raise RuntimeError("Robot connection is lost")
         if self.robot.fault():
             raise RuntimeError("Robot fault; stop and inspect before clearing it")
         if not self.robot.operational():
@@ -139,26 +142,60 @@ class Bestman_Real_Flexiv:
         self.robot_states = self.robot.states()
         return self.robot_states
 
-    def execute_primitive(self, name, parameters=None, *, timeout=30.0):
-        """Execute the new name + parameter-dictionary API and wait for termination."""
+    def execute_primitive(self, name, parameters=None, *, wait=True, timeout=30.0, block_until_started=True):
+        """Execute SDK primitive parameters; wait=False allows state-driven transitions.
+
+        Parameters use the primitive's native schema/units. For robot pose streaming,
+        use the servo methods, whose pose inputs are always [x,y,z,qw,qx,qy,qz].
+        """
         timeout = positive(timeout, "timeout")
+        self._boolean(wait, "wait")
+        self._boolean(block_until_started, "block_until_started")
+        if wait and not block_until_started:
+            raise ValueError("Waiting for completion requires block_until_started=True")
         with self._control():
             self._switch_mode(self.mode.NRT_PRIMITIVE_EXECUTION)
-            self.robot.ExecutePrimitive(name, {} if parameters is None else parameters)
+            self.robot.ExecutePrimitive(name, {} if parameters is None else parameters, block_until_started)
+            if wait:
+                self.wait_for_primitive(timeout=timeout)
+
+    def wait_for_primitive(self, state="terminated", value=True, timeout=30.0):
+        """Wait for a primitive state, e.g. reachedTarget=1, without assuming termination."""
+        timeout = positive(timeout, "timeout")
+        with self._control():
+            self._require_mode(self.mode.NRT_PRIMITIVE_EXECUTION)
             deadline = time.monotonic() + timeout
             while True:
                 self._check_ready()
-                if self.robot.primitive_states().get("terminated", False):
+                states = self.robot.primitive_states()
+                if state in states and states[state] == value:
                     return
                 if time.monotonic() >= deadline:
-                    raise TimeoutError(f"Primitive {name} timed out")
+                    raise TimeoutError(f"Primitive did not reach {state}={value!r}")
                 time.sleep(0.02)
 
-    def execute_plan(self, name, *, wait=True, timeout=60.0):
+    def execute_plan(
+        self, name, *, wait=True, timeout=60.0, continue_execution=False, block_until_started=True
+    ):
+        """Run a plan by name or zero-based index; optionally return after starting.
+
+        continue_execution=True explicitly allows the plan to outlive a lost RDK
+        connection. Robot faults still stop it. Default is False.
+        """
         timeout = positive(timeout, "timeout")
+        for key, flag in (
+            ("wait", wait),
+            ("continue_execution", continue_execution),
+            ("block_until_started", block_until_started),
+        ):
+            self._boolean(flag, key)
+        if not isinstance(name, str):
+            name = integer(name, "plan index", lower=0)
+        if wait and not block_until_started:
+            raise ValueError("Waiting for completion requires block_until_started=True")
         with self._control():
             self._switch_mode(self.mode.NRT_PLAN_EXECUTION)
-            self.robot.ExecutePlan(name)
+            self.robot.ExecutePlan(name, continue_execution, block_until_started)
             if wait:
                 deadline = time.monotonic() + timeout
                 while self.robot.busy():
@@ -317,14 +354,17 @@ class Bestman_Real_Flexiv:
         passive=False,
         max_linear_velocity=None,
         contact_wrench=None,
+        super_primitive=False,
     ):
         """Configure once before sending hybrid/force commands.
 
         Axes: [X,Y,Z,Rx,Ry,Rz]. True selects explicit force/moment control.
+        super_primitive=True selects NRT_SUPER_PRIMITIVE for onboard waypoint batches.
         frame_transform: [x,y,z,qw,qx,qy,qz] relative to the selected root frame.
         Active control is closed-loop; passive is open-loop wrench feedforward.
         Mode changes discard this wrapper's configuration: configure again afterwards.
         """
+        self._boolean(super_primitive, "super_primitive")
         axes = list(axes)
         if len(axes) != 6 or any(type(a) is not bool for a in axes):
             raise ValueError("axes must contain exactly six booleans")
@@ -358,7 +398,9 @@ class Bestman_Real_Flexiv:
             self.stop()
             self._check_ready()
             self.robot.SetPassiveForceControl(passive)
-            self._switch_mode(self.mode.NRT_CARTESIAN_MOTION_FORCE)
+            self._switch_mode(
+                self.mode.NRT_SUPER_PRIMITIVE if super_primitive else self.mode.NRT_CARTESIAN_MOTION_FORCE
+            )
             self.robot.SetForceControlAxis([False] * 6, vmax)
             self.robot.SetMaxContactWrench(limits)
             self.robot.SetForceControlFrame(getattr(self.rdk.CoordType, frame), transform)
@@ -366,10 +408,13 @@ class Bestman_Real_Flexiv:
             self._force_axes, self._force_frame, self._contact_wrench = axes, frame, limits
             self._passive_force = passive
 
-    def _require_cartesian(self):
+    def _require_cartesian(self, *, mode=None):
         self._check_ready()
-        if self.robot.mode() != self.mode.NRT_CARTESIAN_MOTION_FORCE or self._force_axes is None:
-            raise RuntimeError("Call configure_force_control() before Cartesian force/impedance commands")
+        allowed = (
+            (self.mode.NRT_CARTESIAN_MOTION_FORCE, self.mode.NRT_SUPER_PRIMITIVE) if mode is None else (mode,)
+        )
+        if self.robot.mode() not in allowed or self._force_axes is None:
+            raise RuntimeError("Call configure_force_control() for the required Cartesian mode first")
 
     def set_cartesian_impedance(self, stiffness=None, damping_ratio=None):
         """Stiffness [N/m,Nm/rad], damping ratio [0.3,0.8]; None restores nominal."""
@@ -408,7 +453,9 @@ class Bestman_Real_Flexiv:
             self._contact_wrench = limits
 
     def set_max_contact_torque(self, torques):
-        limits = vector(torques, 7, "contact torques", lower=0, allow_inf=True)
+        limits = vector(torques, 7, "contact torques", lower=0)
+        if any(value > maximum for value, maximum in zip(limits, self.robot.info().tau_max)):
+            raise ValueError("Contact torque limit exceeds RobotInfo.tau_max")
         with self._control():
             self._check_ready()
             if self.robot.mode() != self.mode.NRT_JOINT_IMPEDANCE:
@@ -471,7 +518,7 @@ class Bestman_Real_Flexiv:
                 or self.robot.mode() != self.mode.NRT_CARTESIAN_MOTION_FORCE
             ):
                 self.configure_force_control([False] * 6)
-            self._require_cartesian()
+            self._require_cartesian(mode=self.mode.NRT_CARTESIAN_MOTION_FORCE)
             self.robot.SendCartesianMotionForce(*args)
 
     def move_eef_to_goal_pose_wrench(
@@ -495,7 +542,7 @@ class Bestman_Real_Flexiv:
         args = self._cartesian_arguments(
             goal_pose, wrench, velocity, max_linear_vel, max_angular_vel, max_linear_acc, max_angular_acc
         )
-        self._require_cartesian()
+        self._require_cartesian(mode=self.mode.NRT_CARTESIAN_MOTION_FORCE)
         if any(w != 0 and not enabled for w, enabled in zip(args[1], self._force_axes)):
             raise ValueError("Nonzero wrench requires explicitly enabled force-control axes")
         with self._control():
@@ -638,6 +685,379 @@ class Bestman_Real_Flexiv:
             np.linalg.norm(np.array(actual[:3]) - target[:3])
             + self.compute_orientation_error(actual[3:], target[3:])
         )
+
+    # Python RDK provides NRT setpoints, not RT Stream* bindings.
+    def servo_joint_position(
+        self, positions, velocities=None, *, max_vel=None, max_acc=None, impedance=False
+    ):
+        """Send one NRT joint servo target (rad/rad/s), without waiting for arrival.
+
+        Successive calls replan the onboard trajectory. Reuse the current mode;
+        use run_servo() or your own 1–100 Hz loop. This is not a 1 kHz RT stream.
+        """
+        with self._control():
+            self._boolean(impedance, "impedance")
+            self.move_arm_to_joint_values(
+                positions, target_vel=velocities, MAX_VEL=max_vel, MAX_ACC=max_acc, impedance=impedance
+            )
+
+    def servo_cartesian_pose(
+        self,
+        pose,
+        velocity=None,
+        *,
+        max_linear_vel=None,
+        max_angular_vel=None,
+        max_linear_acc=None,
+        max_angular_acc=None,
+    ):
+        """One pure-motion NRT target: WORLD [x,y,z,qw,qx,qy,qz], velocity [vx,vy,vz,wx,wy,wz]."""
+        with self._control():
+            self.move_eef_to_goal_pose(
+                pose,
+                max_linear_vel,
+                max_angular_vel,
+                velocity=velocity,
+                max_linear_acc=max_linear_acc,
+                max_angular_acc=max_angular_acc,
+            )
+
+    def servo_cartesian_motion_force(
+        self,
+        pose,
+        wrench,
+        velocity=None,
+        *,
+        max_linear_vel=None,
+        max_angular_vel=None,
+        max_linear_acc=None,
+        max_angular_acc=None,
+    ):
+        """One NRT motion-force target; configure_force_control() once before the loop.
+
+        Pose: WORLD [x,y,z,qw,qx,qy,qz]. Wrench: sensed N/Nm in the configured force frame.
+        Velocity: WORLD [vx,vy,vz,wx,wy,wz]. No mode reset between successive targets.
+        """
+        with self._control():
+            self.move_eef_to_goal_pose_wrench(
+                pose,
+                wrench,
+                max_linear_vel,
+                max_angular_vel,
+                velocity=velocity,
+                max_linear_acc=max_linear_acc,
+                max_angular_acc=max_angular_acc,
+            )
+
+    def run_servo(self, callback, duration, *, frequency=None, max_lag=0.1):
+        """Call callback(elapsed_seconds) at 1–100 Hz; stop on completion or any failure.
+
+        The callback sends its target through a servo_* method. Missed periods are
+        skipped rather than emitted in a burst. max_lag (seconds) is checked before
+        and after callbacks. This is best-effort Python timing, not a hardware
+        watchdog: a blocked callback cannot be interrupted by this same thread.
+        """
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        duration = positive(duration, "duration")
+        frequency = positive(self.frequency if frequency is None else frequency, "frequency")
+        if not 1 <= frequency <= 100:
+            raise ValueError("Python NRT servo frequency must be in [1, 100] Hz")
+        max_lag = positive(max_lag, "max_lag")
+        period = 1.0 / frequency
+        with self._control():
+            started = next_tick = time.monotonic()
+            deadline = started + duration
+            while (now := time.monotonic()) < deadline:
+                if now - next_tick > max_lag:
+                    raise TimeoutError("Servo loop missed its dispatch deadline")
+                self._check_ready()
+                callback(now - started)
+                after = time.monotonic()
+                if after - next_tick > max_lag:
+                    raise TimeoutError("Servo callback exceeded max_lag")
+                next_tick += period
+                if next_tick <= after:
+                    next_tick = after + period
+                delay = min(next_tick, deadline) - after
+                if delay > 0:
+                    time.sleep(delay)
+            self.stop()
+
+    def send_cartesian_waypoints(
+        self,
+        poses,
+        joint_positions,
+        *,
+        wrenches=None,
+        velocities=None,
+        durations=None,
+        max_linear_vel=None,
+        max_angular_vel=None,
+        max_linear_acc=None,
+        max_angular_acc=None,
+    ):
+        """Send an onboard NRT_SUPER_PRIMITIVE batch; all poses are WORLD wxyz lists.
+
+        Configure force axes first with super_primitive=True. Supply one 7-joint
+        target per pose as required by RDK; joint_targets must match the Cartesian
+        path/tool/world calibration. Durations are seconds (0 = SDK chooses timing).
+        Returns after dispatch, without waiting for execution to finish.
+        """
+        poses, joint_positions = list(poses), list(joint_positions)
+        count = len(poses)
+        if not count or len(joint_positions) != count:
+            raise ValueError("Provide matching nonempty poses and joint_positions")
+        wrenches = [[0.0] * 6 for _ in poses] if wrenches is None else list(wrenches)
+        velocities = [[0.0] * 6 for _ in poses] if velocities is None else list(velocities)
+        durations = [0.0] * count if durations is None else vector(durations, count, "durations", lower=0)
+        if len(wrenches) != count or len(velocities) != count:
+            raise ValueError("wrenches and velocities must match the waypoint count")
+        joints = [self._joints(q) for q in joint_positions]
+        arguments = [
+            self._cartesian_arguments(
+                p, w, v, max_linear_vel, max_angular_vel, max_linear_acc, max_angular_acc
+            )
+            for p, w, v in zip(poses, wrenches, velocities)
+        ]
+        self._require_cartesian(mode=self.mode.NRT_SUPER_PRIMITIVE)
+        if any(w != 0 and not enabled for args in arguments for w, enabled in zip(args[1], self._force_axes)):
+            raise ValueError("Nonzero waypoint wrench requires enabled force-control axes")
+        commands = [self.rdk.NrtCartesianCmd(*args, duration) for args, duration in zip(arguments, durations)]
+        with self._control():
+            self.robot.SendMultiCartesianMotionForce(commands, joints)
+
+    @staticmethod
+    def _boolean(value, name):
+        if type(value) is not bool:
+            raise ValueError(f"{name} must be a boolean")
+        return value
+
+    def _require_mode(self, *modes):
+        self._check_ready()
+        if self.robot.mode() not in modes:
+            raise RuntimeError(f"Operation requires one of {modes}")
+
+    def enable(self):
+        """Request motor enable; initialize_robot() additionally clears faults and waits."""
+        with self._control():
+            self.robot.Enable()
+
+    def clear_fault(self, timeout=30):
+        """Return SDK ClearFault success; the controller remains in IDLE afterwards."""
+        timeout = integer(timeout, "timeout", lower=1)
+        with self._control():
+            result = self.robot.ClearFault(timeout)
+            self._force_axes = self._force_frame = self._contact_wrench = self._passive_force = None
+            return result
+
+    def switch_mode(self, mode):
+        """Switch to an exported Python NRT mode. This may stop existing motion."""
+        allowed = (
+            self.mode.IDLE,
+            self.mode.NRT_PLAN_EXECUTION,
+            self.mode.NRT_PRIMITIVE_EXECUTION,
+            self.mode.NRT_JOINT_POSITION,
+            self.mode.NRT_JOINT_IMPEDANCE,
+            self.mode.NRT_CARTESIAN_MOTION_FORCE,
+            self.mode.NRT_SUPER_PRIMITIVE,
+        )
+        if mode not in allowed:
+            raise ValueError("Only valid Python RDK NRT modes are supported")
+        with self._control():
+            if mode == self.mode.IDLE:
+                self.stop()
+            else:
+                self._switch_mode(mode)
+
+    def get_status(self):
+        """Read SDK status flags without enabling/moving; values are not an atomic snapshot."""
+        return dict(
+            connected=self.robot.connected(),
+            operational=self.robot.operational(),
+            operational_status=self.robot.operational_status(),
+            mode=self.robot.mode(),
+            fault=self.robot.fault(),
+            busy=self.robot.busy(),
+            stopped=self.robot.stopped(),
+            recovery=self.robot.recovery(),
+            reduced=self.robot.reduced(),
+            estop_released=self.robot.estop_released(),
+            enabling_button_pressed=self.robot.enabling_button_pressed(),
+            lite=self.robot.lite(),
+            reached_timeliness_failure_limit=self.robot.reached_timeliness_failure_limit(),
+        )
+
+    def get_robot_info(self):
+        return self.robot.info()
+
+    def get_robot_actions(self):
+        """RDK RobotActions snapshot; tcp_pose_d uses [x,y,z,qw,qx,qy,qz]."""
+        return self.robot.actions()
+
+    def get_event_log(self):
+        return list(self.robot.event_log())
+
+    def get_plan_list(self):
+        return list(self.robot.plan_list())
+
+    def get_plan_info(self):
+        return self.robot.plan_info()
+
+    def get_primitive_states(self):
+        return dict(self.robot.primitive_states())
+
+    def pause_plan(self, paused=True):
+        """Pause/resume a user plan; SDK does not allow resuming internal plans."""
+        paused = self._boolean(paused, "paused")
+        with self._control():
+            self._require_mode(self.mode.NRT_PLAN_EXECUTION)
+            self.robot.PausePlan(paused)
+
+    def stop_plan(self):
+        """Stop plan execution; use stop() to also transition the controller to IDLE."""
+        with self._control():
+            self._require_mode(self.mode.NRT_PLAN_EXECUTION)
+            self.robot.StopPlan()
+
+    def set_breakpoint_mode(self, enabled):
+        enabled = self._boolean(enabled, "enabled")
+        with self._control():
+            self._require_mode(self.mode.NRT_PLAN_EXECUTION)
+            self.robot.SetBreakpointMode(enabled)
+
+    def step_breakpoint(self):
+        with self._control():
+            self._require_mode(self.mode.NRT_PLAN_EXECUTION)
+            self.robot.StepBreakpoint()
+
+    def set_velocity_scale(self, percentage):
+        """Plan/primitive velocity scale, integer percent 0–100; not a servo speed limit."""
+        percentage = integer(percentage, "percentage", lower=0, upper=100)
+        with self._control():
+            self._require_mode(self.mode.NRT_PLAN_EXECUTION, self.mode.NRT_PRIMITIVE_EXECUTION)
+            self.robot.SetVelocityScale(percentage)
+
+    def set_joint_inertia_scale(self, scales):
+        """Joint impedance inertia shaping [0.75,1.0]; 1 is nominal/no shaping."""
+        scales = vector(scales, 7, "inertia scales", lower=0.75, upper=1.0)
+        with self._control():
+            self._require_mode(self.mode.NRT_JOINT_IMPEDANCE)
+            self.robot.SetJointInertiaScale(scales)
+
+    def get_digital_inputs(self):
+        """18 input bits: control box 0–15 and wrist 16–17."""
+        return list(self.robot.digital_inputs())
+
+    def set_digital_outputs(self, outputs):
+        """Set {port_index: bool}, ports 0–17. No automatic motion/mode change."""
+        if not isinstance(outputs, Mapping) or not outputs:
+            raise ValueError("outputs must be a nonempty mapping of port numbers to booleans")
+        outputs = {
+            integer(port, "port", lower=0, upper=17): self._boolean(value, "output")
+            for port, value in outputs.items()
+        }
+        self.robot.SetDigitalOutputs(outputs)
+
+    def get_global_variables(self):
+        return dict(self.robot.global_variables())
+
+    def set_global_variables(self, values):
+        """Set existing Elements variables with SDK types; use integer 0/1 for booleans."""
+        if (
+            not isinstance(values, Mapping)
+            or not values
+            or any(not isinstance(k, str) or not k for k in values)
+        ):
+            raise ValueError("values must be a nonempty mapping of variable names to SDK values")
+        self.robot.SetGlobalVariables(dict(values))
+
+    def run_auto_recovery(self):
+        """Blocking SDK recovery for out-of-range joints; a controller reboot is required afterwards."""
+        if not self.robot.recovery():
+            raise RuntimeError("Robot is not in the SDK recovery state")
+        with self._control():
+            self._force_axes = self._force_frame = self._contact_wrench = self._passive_force = None
+            self.robot.RunAutoRecovery()
+
+    def sdk_interface(self, name, *, password=None, gravity_vector=None):
+        """Create a native SDK service without starting its operations.
+
+        Tool/Gripper/Device/WorkCoord/FileIO/Maintenance/Model/Safety retain their
+        official APIs and license requirements. Safety requires its configured
+        password. Model defaults to WORLD gravity [0,0,-9.81]. Keep the returned
+        object for reuse. Raw SDK calls do not synchronize wrapper mode/tool caches.
+        """
+        classes = {
+            key: getattr(self.rdk, key)
+            for key in ("Tool", "Gripper", "Device", "WorkCoord", "FileIO", "Maintenance", "Model", "Safety")
+        }
+        if name not in classes:
+            raise ValueError(f"Unknown SDK interface; choose from {tuple(classes)}")
+        if password is not None and name != "Safety":
+            raise ValueError("password is only used by Safety")
+        if gravity_vector is not None and name != "Model":
+            raise ValueError("gravity_vector is only used by Model")
+        if name == "Safety":
+            if not isinstance(password, str) or not password:
+                raise ValueError("Safety requires an explicit password")
+            return classes[name](self.robot, password)
+        if name == "Model":
+            gravity = vector([0, 0, -9.81] if gravity_vector is None else gravity_vector, 3, "gravity")
+            return classes[name](self.robot, gravity)
+        return classes[name](self.robot)
+
+    def list_tools(self):
+        return list(self.rdk.Tool(self.robot).list())
+
+    def switch_tool(self, name):
+        """Activate an existing controller tool in IDLE and synchronize the offline TCP."""
+        from dataclasses import replace
+
+        tool = self.rdk.Tool(self.robot)
+        pose = pose_vector(tool.params(name).tcp_location, "tool tcp_location")
+        with self._control():
+            self.stop()
+            self._check_ready()
+            tool.Switch(name)
+            self.config = replace(self.config, flange_to_tcp=tuple(pose))
+
+    def remove_tool(self, name):
+        """Remove an inactive custom tool. Switch tools explicitly before deleting the active one."""
+        tool = self.rdk.Tool(self.robot)
+        if name == "Flange" or name == tool.name():
+            raise ValueError("Cannot remove Flange or the active tool")
+        with self._control():
+            self.stop()
+            self._check_ready()
+            tool.Remove(name)
+
+    def list_work_coordinates(self):
+        return list(self.rdk.WorkCoord(self.robot).list())
+
+    def get_work_coordinate(self, name):
+        """Return WORLD [x,y,z,qw,qx,qy,qz] for an existing work coordinate."""
+        return list(self.rdk.WorkCoord(self.robot).pose(name))
+
+    def configure_work_coordinate(self, name, pose):
+        """Add/update a WORLD [x,y,z,qw,qx,qy,qz] work coordinate in IDLE."""
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Work coordinate name must be nonempty")
+        pose = pose_vector(pose)
+        with self._control():
+            self.stop()
+            self._check_ready()
+            work = self.rdk.WorkCoord(self.robot)
+            if work.exist(name):
+                work.Update(name, pose)
+            else:
+                work.Add(name, pose)
+
+    def remove_work_coordinate(self, name):
+        with self._control():
+            self.stop()
+            self._check_ready()
+            self.rdk.WorkCoord(self.robot).Remove(name)
 
     def find_gripper(self):
         """List a likely USB serial port without writing to unrelated serial devices."""

@@ -18,6 +18,7 @@ Keep the SDK version pinned when installing.
 - [RDK 2.1 Enlight compatibility](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v2.1)
 - [Migration guide and force-control APIs](docs/SDK_MIGRATION.md)
 - [Validation results and simulation limitations](docs/VALIDATION.md)
+- [Python SDK coverage and servo APIs](docs/PYTHON_SDK_COVERAGE.md)
 
 ## Installation
 
@@ -68,6 +69,40 @@ trajectory replay, tool TCPs, force-control frame transforms, and FK/IK. No pose
 are needed. Tuples and NumPy arrays in the same order are also accepted as inputs;
 outputs are plain lists. Commands validate vector length, finite values, and unit
 quaternions without reordering components or automatically normalizing them.
+
+## NRT servo control
+
+Use `servo_joint_position()` for successive joint targets, `servo_cartesian_pose()`
+for pure Cartesian motion, or `servo_cartesian_motion_force()` for hybrid motion-force
+targets. Cartesian poses remain plain `[x,y,z,qw,qx,qy,qz]` lists (wxyz).
+These calls do not wait for arrival; the controller replans and smooths each target.
+
+`run_servo(callback, duration, frequency=...)` provides a bounded 1–100 Hz loop that
+stops on completion, exceptions, faults or observed excessive lag. Finish mode/force
+configuration before entering the loop. Python timing is best-effort; a blocked
+callback cannot be interrupted by this same-thread helper.
+
+```bash
+# Hold the current joint positions at 50 Hz for five seconds
+python -m Examples.servo_joint_position Rizon4-123456 --frequency 50 --duration 5
+# Small Cartesian sine motion; all poses and outputs use wxyz
+python -m Examples.servo_cartesian_motion_force Rizon4-123456 --amplitude 0.005
+# Add 3 N sensed WORLD Z force; prepare tool calibration and contact conditions first
+python -m Examples.servo_cartesian_motion_force Rizon4-123456 --force-z 3
+# Read status, plans, digital inputs and commanded actions without enabling motion
+python -m Examples.sdk_status Rizon4-123456
+```
+
+The Python RDK 1.9.4.1 wheel exposes NRT `Send*` calls, **not** RT `Stream*` calls or
+RT modes. Use the official C++ SDK for 1 kHz real-time control. `Enable()` is the
+Rizon motor-enable API; this version has no Python `ServoOn()`/`Disable()` robot API,
+and `Brake()` is restricted to medical models.
+
+The [SDK coverage guide](docs/PYTHON_SDK_COVERAGE.md) accounts for all 53 Python Robot
+members: 49 covered, four excluded for the Rizon 4/NRT profile. It also documents
+onboard waypoint batches, plan pause/resume and breakpoints, asynchronous primitives,
+joint inertia shaping, digital IO, global variables, tool/work-coordinate management,
+and access to the eight native SDK service interfaces.
 
 ## Force control
 
