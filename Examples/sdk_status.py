@@ -19,19 +19,23 @@ def main():
     arm = Bestman_Real_Flexiv(
         args.robot_sn, args.frequency, network_interface_whitelist=args.interface, config=args.config
     )
-    print(json.dumps(arm.get_status(), default=str, indent=2))
-    plan = arm.get_plan_info()
-    print(
-        "Current plan:",
-        json.dumps(
-            {
-                "name": plan.assigned_plan_name,
-                "primitive": plan.pt_name,
-                "node": plan.node_name,
-                "waiting_for_step": plan.waiting_for_step,
-            }
-        ),
-    )
+    status = arm.get_status()
+    print(json.dumps(status, default=str, indent=2))
+    if status["mode"] == arm.mode.NRT_PLAN_EXECUTION:
+        plan = arm.get_plan_info()
+        print(
+            "Current plan:",
+            json.dumps(
+                {
+                    "name": plan.assigned_plan_name,
+                    "primitive": plan.pt_name,
+                    "node": plan.node_name,
+                    "waiting_for_step": plan.waiting_for_step,
+                }
+            ),
+        )
+    elif status["mode"] == arm.mode.NRT_PRIMITIVE_EXECUTION:
+        print("Primitive states:", json.dumps(arm.get_primitive_states(), default=str))
     print("Plans:", arm.get_plan_list())
     print("Digital inputs (0-17):", arm.get_digital_inputs())
     print("Events:", arm.get_event_log())

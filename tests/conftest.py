@@ -236,6 +236,7 @@ class RecordingRobot:
         return ["PLAN-Home", "user-plan"]
 
     def plan_info(self):
+        assert self.mode() == flexivrdk.Mode.NRT_PLAN_EXECUTION
         return SimpleNamespace(
             assigned_plan_name=self.current_plan_name,
             pt_name="Hold",

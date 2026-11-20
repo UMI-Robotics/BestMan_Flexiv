@@ -45,3 +45,17 @@ def test_pure_motion_clears_passive_even_when_all_axes_were_motion(arm, backend)
     arm.move_eef_to_goal_pose(arm.get_current_eef_pose())
     assert arm._passive_force is False
     assert ("SetPassiveForceControl", False) in backend.events
+
+
+@pytest.mark.parametrize("mode", ["IDLE", "NRT_PLAN_EXECUTION", "NRT_PRIMITIVE_EXECUTION"])
+def test_status_reads_details_applicable_to_current_mode(arm, backend, monkeypatch, capsys, mode):
+    from Examples import sdk_status
+
+    backend.current_mode = getattr(arm.mode, mode)
+    monkeypatch.setattr(sdk_status, "Bestman_Real_Flexiv", lambda *a, **kw: arm)
+    monkeypatch.setattr(sys, "argv", ["status", "Rizon4-123456"])
+    sdk_status.main()
+    text = capsys.readouterr().out
+    assert ("Current plan:" in text) == (mode == "NRT_PLAN_EXECUTION")
+    assert ("Primitive states:" in text) == (mode == "NRT_PRIMITIVE_EXECUTION")
+    assert backend.events == []

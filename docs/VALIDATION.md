@@ -32,9 +32,13 @@ faults, disconnect, mode changes, primitive termination/start timeout, polling d
 license/command failure, EOF/Ctrl+C, partial terminal input, and exact wxyz
 recording/replay. Existing records are saved even on controller errors.
 
-- macOS arm64 / Python 3.12.13 / official RDK 1.9.3: **205 tests passed**, including
+- macOS arm64 / Python 3.12.13 / official RDK 1.9.3: **208 tests passed**, including
   18 teaching regression cases. The old default failed the primitive-dispatch regression.
 - Ruff and `git diff --check`: passed; the existing IKPy warning remains.
+- A subsequent read-only check found the controller in IDLE, READY and without faults.
+  It exposed that `plan_info()` is valid only in NRT_PLAN_EXECUTION. The status example
+  now reads details for the current mode; three mode-specific cases cover IDLE, plan
+  execution and primitive execution without issuing control commands.
 
 All hardware observations were read-only and preserved the existing teaching
 process. The revised primitive path has not been executed on the physical robot;
