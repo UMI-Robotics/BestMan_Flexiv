@@ -53,6 +53,7 @@ def test_teaching_and_replay_keep_sdk_pose_vectors(arm, backend, monkeypatch, tm
     output = tmp_path / "trajectory.json"
     values = [0.4, 0.1, 0.5, 0.8, 0.2, 0.4, 0.4]
     backend.state.tcp_pose = values.copy()
+    backend.plan_busy = True
     monkeypatch.setattr(teach_by_demonstration, "Bestman_Real_Flexiv", lambda *a, **kw: arm)
     monkeypatch.setattr(move_eef_follow_trajectory, "Bestman_Real_Flexiv", lambda *a, **kw: arm)
     commands = iter(["r", "q"])
@@ -65,4 +66,68 @@ def test_teaching_and_replay_keep_sdk_pose_vectors(arm, backend, monkeypatch, tm
     move_eef_follow_trajectory.main()
     sent = [e for e in backend.events if e[0] == "SendCartesianMotionForce"]
     assert len(sent) == 1 and sent[0][1] == values
+    assert backend.events[-1] == ("Stop",)
+
+
+def test_teaching_explains_button_requirement_and_reports_hold(arm, backend, monkeypatch, tmp_path, capsys):
+    backend.plan_busy = True
+    monkeypatch.setattr(teach_by_demonstration, "Bestman_Real_Flexiv", lambda *a, **kw: arm)
+    monkeypatch.setattr(sys, "argv", ["teach", "Rizon4-123456", "--output", str(tmp_path / "poses.json")])
+    monkeypatch.setattr("builtins.input", lambda prompt: "q")
+    teach_by_demonstration.main()
+    text = capsys.readouterr().out
+    assert "Press and HOLD the enabling button on the Motion Bar" in text
+    assert "enabling_button=RELEASED" in text
+    assert "primitive=Hold" in text
+    assert "s: show current controller status" in text
+    assert not any(
+        event[0] in ("ExecutePrimitive", "SendJointPosition", "SendCartesianMotionForce")
+        for event in backend.events
+    )
+
+
+def test_teaching_status_command_reads_button_without_recording(arm, backend, monkeypatch, tmp_path, capsys):
+    import json
+
+    output = tmp_path / "poses.json"
+    backend.plan_busy = True
+    monkeypatch.setattr(teach_by_demonstration, "Bestman_Real_Flexiv", lambda *a, **kw: arm)
+    monkeypatch.setattr(sys, "argv", ["teach", "Rizon4-123456", "--output", str(output)])
+    commands = iter(["s", "q"])
+
+    def enter(prompt):
+        monkeypatch.setattr(backend, "enabling_button_pressed", lambda: True)
+        return next(commands)
+
+    monkeypatch.setattr("builtins.input", enter)
+    teach_by_demonstration.main()
+    text = capsys.readouterr().out
+    assert "enabling_button=RELEASED" in text and "enabling_button=PRESSED" in text
+    assert json.loads(output.read_text()) == []
+    assert sum(event[0] == "ExecutePlan" for event in backend.events) == 1
+
+
+@pytest.mark.parametrize("failure", ["fault", "plan_ended", "mode_changed"])
+def test_teaching_rechecks_controller_before_recording(arm, backend, monkeypatch, tmp_path, capsys, failure):
+    import json
+
+    output = tmp_path / "poses.json"
+    backend.plan_busy = True
+    monkeypatch.setattr(teach_by_demonstration, "Bestman_Real_Flexiv", lambda *a, **kw: arm)
+    monkeypatch.setattr(sys, "argv", ["teach", "Rizon4-123456", "--output", str(output)])
+    commands = iter(["r", "q"])
+
+    def enter(prompt):
+        if failure == "fault":
+            backend.has_fault = True
+        elif failure == "plan_ended":
+            backend.plan_busy = False
+        else:
+            backend.current_mode = arm.mode.IDLE
+        return next(commands)
+
+    monkeypatch.setattr("builtins.input", enter)
+    teach_by_demonstration.main()
+    assert json.loads(output.read_text()) == []
+    assert "Pose not recorded" in capsys.readouterr().out
     assert backend.events[-1] == ("Stop",)

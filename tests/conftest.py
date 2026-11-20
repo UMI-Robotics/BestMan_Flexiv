@@ -17,6 +17,7 @@ class RecordingRobot:
         self.fail_send = False
         self.terminated = True
         self.plan_busy = False
+        self.current_plan_name = ""
         self.needs_recovery = False
         self.digital_values = {}
         self.variables = {"test_value": 1}
@@ -152,6 +153,7 @@ class RecordingRobot:
 
     def ExecutePlan(self, name, continue_exec=False, block_until_started=True):
         assert self.mode() == flexivrdk.Mode.NRT_PLAN_EXECUTION
+        self.current_plan_name = str(name)
         self.events.append(("ExecutePlan", name, continue_exec, block_until_started))
 
     def SendMultiCartesianMotionForce(self, cart_cmds, joint_pos):
@@ -234,7 +236,13 @@ class RecordingRobot:
         return ["PLAN-Home", "user-plan"]
 
     def plan_info(self):
-        return SimpleNamespace(waiting_for_step=False)
+        return SimpleNamespace(
+            assigned_plan_name=self.current_plan_name,
+            pt_name="Hold",
+            node_name="hold",
+            node_path="rootNode::hold",
+            waiting_for_step=False,
+        )
 
     def RunAutoRecovery(self):
         assert self.needs_recovery

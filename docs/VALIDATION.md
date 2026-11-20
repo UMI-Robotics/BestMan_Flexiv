@@ -1,5 +1,30 @@
 # Validation
 
+## 2026-11-20 — teaching activation and read-only controller diagnosis
+
+A read-only connection to a Rizon 4 using RDK 1.9.3 sampled controller status eight
+times while the existing teaching process continued running. All samples reported
+READY, no fault, NRT_PLAN_EXECUTION and an active `PLAN-FreeDriveAuto`, with the
+current primitive/node at `Hold`/`hold` and `enabling_button_pressed=False`.
+The controller was not detecting the Motion Bar enabling button; starting this
+plan alone does not activate hand-guiding.
+
+The teaching example now explains the hold-to-guide operation and displays current
+plan/button status. It refreshes status with `s`, checks readiness before recording,
+and still permits recording with the button released while the plan holds position.
+Records remain plain `[x,y,z,qw,qx,qy,qz]` lists. Custom plans retain their own
+activation conditions.
+
+- macOS arm64 / Python 3.12.13 / official RDK 1.9.3: **193 tests passed**.
+- Five new regression cases failed before the fix and pass afterward, covering
+  activation instructions/status and recording after faults, plan end or mode changes.
+- Ruff and `git diff --check`: passed; the existing IKPy warning remains.
+
+The diagnostic connection issued no enable, stop, mode, plan or motion commands and
+did not interrupt the existing teaching process. No physical button transition or
+successful hand-guiding was observed; the tests validate the example's guidance and
+control flow, not physical free-drive behavior.
+
 ## 0.3.1 — RDK 1.9.3 / controller 3.11.2 (2026-11-20)
 
 Package metadata, runtime checks, the Conda YAML and both SDK installation scripts
