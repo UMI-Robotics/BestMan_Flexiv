@@ -1,1 +1,1 @@
-"""Run examples with python -m Examples.<name> after installing the project."""
+"""Independent API examples; run each file or use python -m Examples.<name> after installation."""

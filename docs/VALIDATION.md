@@ -1,5 +1,35 @@
 # Validation — 2026-11-16
 
+## 2026-11-20 — independent examples and installation paths
+
+Removed `Examples/_run.py` and `Examples/_common.py`. Each robot example now owns
+its argument parsing, connection, initialization, control calls and cleanup. The
+servo examples show their timed loops and directly call `servo_*` APIs. All pose
+inputs, outputs, teaching records and replay waypoints remain plain wxyz lists.
+
+Verified on macOS arm64 / Python 3.12.13 with official RDK 1.9.4.1:
+
+- **179 tests passed**; Ruff and `git diff --check` passed. The existing IKPy
+  fixed-link-mask FutureWarning remains.
+- All 20 examples start with `--help` as installed modules, direct files and copied
+  standalone files from outside the checkout, with `PYTHONPATH` removed.
+- Both independent servo loops stop on injected fault, disconnect, excessive command
+  lag and Ctrl+C; measured-force aborts and exact wxyz teaching/replay still pass.
+- `Install/setup.sh` installed a fresh project copy in a path containing spaces,
+  launched from another directory, and successfully reused its created environment.
+- A separate environment installed a regular wheel, without editable/source-path
+  configuration: all **60 example entry-point checks passed**. Installed imports
+  resolved to that environment's `site-packages`; built-in defaults and the packaged
+  Rizon 4 URDF loaded, and offline FK returned a finite transform.
+- A clean wheel contains neither deleted helper module. CI now installs a regular
+  distribution and runs the outside-checkout example and URDF checks.
+
+These are installation, interface and offline kinematic checks. No controller
+connection or robot motion was attempted, and they do not resolve the simulation
+controller prerequisite described below.
+
+## Historical migration results
+
 The results below describe the initial SDK migration (0.2.0). The subsequent
 0.2.1 update removes the Pose class and uses raw wxyz vectors throughout; see
 the added regression results below.

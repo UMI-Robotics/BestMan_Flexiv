@@ -1,42 +1,100 @@
 # Rizon 4 installation
 
 Use Python 3.12 (or 3.10) on Ubuntu 22.04+, Windows x86_64, or macOS 12+ arm64.
-The RDK 1.9.4.1 release also ships Python 3.14 Linux wheels, but this repository's
-CI targets 3.10/3.12. Do not use the old Python 3.8 environment.
+The repository CI targets Python 3.10 and 3.12. Python 3.8 is unsupported.
+
+## One-command setup on Linux/macOS
+
+After cloning or extracting the ZIP:
 
 ```bash
-git clone https://github.com/UMI-Robotics/BestMan_Flexiv.git
 cd BestMan_Flexiv
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install '.[dev]'
-python -c "from importlib.metadata import version; import flexivrdk; print(version('flexivrdk'))"
-python -m pytest -q
+bash Install/setup.sh
+.venv/bin/python Examples/display_states.py Rizon4-123456
 ```
 
-Expected SDK: **1.9.4.1**. RDK 2.1 is for Enlight and is not compatible with Rizon 4.
-The connected Rizon controller must run Flexiv software **3.11.3 or 3.11.4** and
-have a valid RDK license. Check controller software and remote mode in Elements.
-The SDK enforces robot/software compatibility at connection time.
+`setup.sh` locates the project from its own location, creates `.venv`, installs the
+project in editable mode with the pinned official SDK, and checks imports. It also
+works when invoked by absolute path from another directory, including paths with spaces.
+It does not change shell profiles or `PYTHONPATH`, and does not connect to a robot.
+An existing `.venv` is reused. Python 3.12 is preferred; 3.10 is also accepted.
+RDK 1.9.4.1 has no Python 3.11 wheel, so the script skips that interpreter.
+
+Options:
+
+```bash
+bash Install/setup.sh --python python3.12
+bash Install/setup.sh --extras dev
+bash Install/setup.sh --extras gripper
+bash Install/setup.sh --extras dev,gripper,camera
+```
+
+The gripper extra is for serial Robotiq devices; the camera extra is for RealSense.
+Camera wheel availability depends on OS/Python. These extras are unnecessary for
+robot motion and force-control examples. Supply actual device serials/ports via CLI.
+
+## Standard pip installation (including Windows)
+
+From the project directory, in an activated Python environment:
+
+```bash
+python -m pip install -e .
+python -m Examples.display_states Rizon4-123456
+```
+
+For a new Windows environment, first run `py -3.12 -m venv .venv` and activate with
+`.venv\Scripts\Activate.ps1` in PowerShell. For a new Linux/macOS environment, use
+`python3.12 -m venv .venv` and `source .venv/bin/activate`.
 
 Conda alternative: `conda env create -f Install/basic_env_py312.yaml`, then
-`conda activate bestman-flexiv` and `python -m pip install '.[dev]'` from the repository root.
+`conda activate bestman-flexiv` and `python -m pip install -e .`.
+A regular non-editable `python -m pip install .` also packages the examples and Rizon 4 URDF.
 
-Optional extras:
+## Imports, resources and example entry points
 
-- `python -m pip install '.[gripper]'`: serial Robotiq gripper. Set the exact serial port.
-- `python -m pip install '.[camera]'`: original RealSense camera module. Wheel availability depends on OS/Python.
+After installation, use the same environment's Python. Each example is independent:
 
-Old `Install/flexiv_rdk` vendor binaries are removed in favor of the pinned official wheel.
-Remove old references to `Install/flexiv_rdk/lib_py` from `PYTHONPATH` in shell startup files.
-`load_flexivrdk.sh` now installs the pinned wheel; `pythonpath.sh` installs this package
-instead of editing `.bashrc`. ROS is optional for historical applications and is not
-required by Robotics_API or the maintained Examples.
+```bash
+# Direct file entry point from the checkout:
+python Examples/force_control.py Rizon4-123456 --help
+# Installed module entry point from any directory:
+python -m Examples.force_control Rizon4-123456 --help
+```
 
-Connection uses the serial number, e.g. `Rizon4-123456`. The optional `--interface`
-parameter is a local NIC IPv4 address, not the robot IP. Python NRT command frequency
-is limited by this wrapper to 1–100 Hz, following the official Python examples.
+You can also copy one example elsewhere and run it with the installed environment;
+it does not import another example. Every control script shows the connection,
+initialization, mode/configuration, commands and stop sequence in that file.
+The two servo examples contain their own timed loops and directly call `servo_*` APIs.
 
-Run from the repository root with `python -m Examples.display_states Rizon4-123456`.
-The read-only example does not enable or stop the robot. Motion examples own the
-connection and always stop before exit. Do not run multiple motion owners concurrently.
+The default Rizon 4 profile is built into the package. Offline FK/IK resolves the
+packaged URDF relative to the installed package, not the current working directory.
+No config path or asset path needs editing. Optional `--config`, `--trajectory` and
+`--output` paths are supplied by the caller and resolve against the current directory.
+Teaching and replay use plain `[x,y,z,qw,qx,qy,qz]` lists throughout (metres, wxyz).
+
+## Controller requirements
+
+Expected SDK: **1.9.4.1**. RDK 2.1 targets Enlight and is not compatible with Rizon 4.
+The Rizon controller must run software **3.11.3 or 3.11.4**, have an RDK license and
+be reachable in Auto (Remote) mode. The SDK checks compatibility at connection time.
+Use the actual robot serial number in place of `Rizon4-123456`. Optional `--interface`
+is a local NIC IPv4 address, not the robot IP. Python NRT frequency is 1–100 Hz.
+
+ROS and manual SDK path setup are not required. For existing legacy installations,
+remove old `Install/flexiv_rdk/lib_py` entries from `PYTHONPATH`; fresh downloads need
+no such changes. The older `pythonpath.sh` installs the package instead of editing
+`.bashrc`, but new installations should use `setup.sh` or standard pip.
+
+Read-only examples do not enable or stop the robot. Motion examples always stop
+before exit. Run one motion owner at a time.
+
+## Development checks
+
+```bash
+bash Install/setup.sh --extras dev
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check Robotics_API Examples tests
+```
+
+The tests check every example as a module, a direct file and a copied file from outside
+the checkout with `PYTHONPATH` removed. They do not connect to hardware.

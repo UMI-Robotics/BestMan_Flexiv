@@ -1,7 +1,9 @@
 """Verify against the actual installed binary, without connecting to any robot."""
 
 import ast
+import os
 import re
+import shutil
 import subprocess
 import sys
 from importlib.metadata import version
@@ -73,16 +75,52 @@ EXAMPLES = sorted(p.stem for p in (ROOT / "Examples").glob("*.py") if not p.name
 
 
 @pytest.mark.parametrize("name", EXAMPLES)
-def test_example_help_works_without_ros_gripper_or_robot(name):
+@pytest.mark.parametrize("entry", ["module", "file", "copied_file"])
+def test_example_help_works_without_ros_gripper_or_robot(name, entry, tmp_path):
+    # Run outside the checkout with no PYTHONPATH. A copied file has no sibling examples.
+    source = ROOT / "Examples" / f"{name}.py"
+    if entry == "copied_file":
+        source = Path(shutil.copy2(source, tmp_path))
+    command = ["-m", f"Examples.{name}"] if entry == "module" else [str(source)]
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     result = subprocess.run(
-        [sys.executable, "-m", f"Examples.{name}", "--help"],
-        cwd=ROOT,
+        [sys.executable, *command, "--help"],
+        cwd=tmp_path,
+        env=env,
         text=True,
         capture_output=True,
         timeout=15,
     )
     assert result.returncode == 0, result.stderr
     assert "usage:" in result.stdout
+
+
+def test_installed_urdf_loads_outside_checkout(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            """
+import numpy as np
+from Robotics_API import Bestman_Real_Flexiv
+from Robotics_API.config import RobotConfig
+
+# Exercise the installed resource resolver without constructing an SDK Robot.
+arm = Bestman_Real_Flexiv.__new__(Bestman_Real_Flexiv)
+arm.config = RobotConfig.load()
+arm._robot_chain = None
+transform = arm.robot_chain.forward_kinematics([0.0] * 9)
+assert transform.shape == (4, 4) and np.isfinite(transform).all()
+assert arm.config.model == "Rizon4"
+""",
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_entire_python_robot_inventory_is_documented_and_accounted_for():

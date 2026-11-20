@@ -26,13 +26,22 @@ Ubuntu 22.04+ with Python 3.12 is recommended. Official Python 3.10 wheels are a
 available for Linux, Windows, and macOS arm64. Python 3.8 is no longer supported.
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install '.[dev]'
-# For serial grippers: python -m pip install '.[gripper]'
-# For RealSense cameras: python -m pip install '.[camera]'
-python -m pytest -q
+git clone https://github.com/UMI-Robotics/BestMan_Flexiv.git
+cd BestMan_Flexiv
+bash Install/setup.sh
+.venv/bin/python Examples/display_states.py Rizon4-123456
 ```
+
+For a downloaded ZIP, extract it and run `bash Install/setup.sh` inside the project.
+The script creates `.venv`, installs this project and the pinned SDK, and checks imports.
+It locates the project from its own file, so it also works when launched from another
+directory. Use `--extras gripper`, `--extras camera`, or `--extras dev` when needed;
+extras can be combined as `--extras dev,gripper`.
+
+After `source .venv/bin/activate`, use `python Examples/display_states.py ...` or
+`python -m Examples.display_states ...`. The installed package and its URDF resources
+work from any working directory; neither source edits nor `sys.path`/`PYTHONPATH`
+changes are needed. Replace `Rizon4-123456` with the actual robot serial number.
 
 ROS, `roscore`, and manual SDK path configuration are not required. If you previously
 used the old installation scripts, remove any `PYTHONPATH` entries pointing to
@@ -50,7 +59,7 @@ information; it does not enable or move the robot.
 ```python
 from Robotics_API import Bestman_Real_Flexiv
 
-arm = Bestman_Real_Flexiv("Rizon4-123456", config="config/rizon4.json")
+arm = Bestman_Real_Flexiv("Rizon4-123456")  # Built-in defaults; no config path required.
 try:
     arm.initialize_robot()
     # Inputs and outputs: [x, y, z, qw, qx, qy, qz], with position in metres.
@@ -77,10 +86,10 @@ for pure Cartesian motion, or `servo_cartesian_motion_force()` for hybrid motion
 targets. Cartesian poses remain plain `[x,y,z,qw,qx,qy,qz]` lists (wxyz).
 These calls do not wait for arrival; the controller replans and smooths each target.
 
-`run_servo(callback, duration, frequency=...)` provides a bounded 1–100 Hz loop that
-stops on completion, exceptions, faults or observed excessive lag. Finish mode/force
-configuration before entering the loop. Python timing is best-effort; a blocked
-callback cannot be interrupted by this same-thread helper.
+Each servo example shows its own 1–100 Hz `while` loop, target calculation, direct
+`servo_*` call, timing checks and `finally: arm.stop()`. Finish mode/force configuration
+before entering the loop. Python timing is best-effort; lag can only be detected
+after a blocked API call returns.
 
 ```bash
 # Hold the current joint positions at 50 Hz for five seconds
@@ -142,10 +151,42 @@ controller-level real-time protection either.
 
 ## Examples
 
-Run these commands from the repository root and replace the example serial number
-with your robot's actual serial number. The default frequency is 20 Hz; use
+Every example is a complete, independent script. Open one file to see argument parsing,
+connection, initialization, mode/force configuration, API calls, waiting or polling,
+and cleanup. Read-only examples only connect and read. Servo loops are written directly
+in their files, without a dispatcher, shared lifecycle helper or callback runner.
+
+After installation and environment activation, the module commands below work from
+any directory. Alternatively, run a file directly, e.g.
+`python Examples/force_control.py Rizon4-123456` from the checkout. Replace the example
+serial number with your robot's actual serial number. The default frequency is 20 Hz; use
 `--frequency` to select 1–100 Hz. All robot examples support
-`--config config/rizon4.json` and repeatable `--interface 192.168.2.108` arguments.
+an optional `--config` file and repeatable `--interface 192.168.2.108` arguments.
+Built-in defaults need no configuration file. User-supplied config/trajectory/output
+paths are relative to the current directory, or may be absolute.
+
+| Independent example | What the file demonstrates |
+| --- | --- |
+| [display_states.py](Examples/display_states.py) | Read joint, TCP and force states. |
+| [sdk_status.py](Examples/sdk_status.py) | Read status, plans, IO, events and commanded TCP. |
+| [move_arm_to_home.py](Examples/move_arm_to_home.py) | Enable, select plan mode and run Home. |
+| [move_arm_to_joint_values.py](Examples/move_arm_to_joint_values.py) | Send a joint target and wait for arrival. |
+| [move_arm_follow_joint_values.py](Examples/move_arm_follow_joint_values.py) | Read and execute joint waypoints from JSON. |
+| [move_eef_to_pose.py](Examples/move_eef_to_pose.py) | Send a WORLD wxyz TCP target and wait. |
+| [move_eef_follow_trajectory.py](Examples/move_eef_follow_trajectory.py) | Replay WORLD wxyz waypoints from JSON. |
+| [servo_joint_position.py](Examples/servo_joint_position.py) | Compute and send joint targets in an explicit timed loop. |
+| [servo_cartesian_motion_force.py](Examples/servo_cartesian_motion_force.py) | Stream NRT Cartesian targets with optional Z force. |
+| [force_control.py](Examples/force_control.py) | Configure force frame/axes and send a bounded wrench. |
+| [cartesian_impedance.py](Examples/cartesian_impedance.py) | Set Cartesian stiffness and hold the current TCP. |
+| [joint_impedance.py](Examples/joint_impedance.py) | Set joint stiffness and hold the current joint positions. |
+| [zero_force_torque_sensors.py](Examples/zero_force_torque_sensors.py) | Select primitive mode and run sensor zeroing. |
+| [teach_by_demonstration.py](Examples/teach_by_demonstration.py) | Run free-drive, record wxyz lists and save JSON. |
+| [open_gripper.py](Examples/open_gripper.py) | Connect and open a serial Robotiq gripper. |
+| [close_gripper.py](Examples/close_gripper.py) | Connect and close the gripper. |
+| [open_gripper_width.py](Examples/open_gripper_width.py) | Send a raw 0–255 gripper position. |
+| [graspany.py](Examples/graspany.py) | Move to a TCP target, wait and close the gripper. |
+| [get_rgbd.py](Examples/get_rgbd.py) | Display RealSense RGBD (camera extra required). |
+| [test.py](Examples/test.py) | Read joints and compare offline FK/IK, without motion. |
 
 ```bash
 # Read states without enabling the robot

@@ -11,6 +11,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install -e '.[dev]'
+      # A normal install also verifies example modules and URDF package data.
+      - run: python -m pip install '.[dev]'
       - run: python -m pytest -q
       - run: ruff check Robotics_API Examples tests

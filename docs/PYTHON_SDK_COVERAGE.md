@@ -40,6 +40,7 @@ helper is not a hardware watchdog or a guarantee of hard real-time timing.
 
 ```python
 import math
+import time
 from Robotics_API import Bestman_Real_Flexiv
 
 arm = Bestman_Real_Flexiv("Rizon4-123456", frequency=50)
@@ -48,18 +49,20 @@ try:
     arm.configure_force_control([False] * 6)
     initial = arm.get_current_eef_pose()  # [x,y,z,qw,qx,qy,qz], wxyz
 
-    def update(elapsed):
+    started = time.monotonic()
+    while time.monotonic() - started < 5.0:
+        elapsed = time.monotonic() - started
         target = initial.copy()
         target[0] += 0.005 * math.sin(2 * math.pi * 0.25 * elapsed)
         arm.servo_cartesian_pose(target)
-
-    arm.run_servo(update, duration=5)
+        time.sleep(1.0 / arm.frequency)
 finally:
     arm.stop()
 ```
 
-The runnable Cartesian example additionally monitors measured force/moment and TCP
-travel. Both servo examples hold position by default (`--amplitude 0`) and never
+Each runnable servo example contains its own timed loop, lag checks and stop cleanup,
+with direct `servo_*` calls; neither uses the optional `run_servo` library helper.
+The Cartesian example additionally monitors measured force/moment and TCP travel. Both servo examples hold position by default (`--amplitude 0`) and never
 move Home or zero sensors automatically:
 
 ```bash

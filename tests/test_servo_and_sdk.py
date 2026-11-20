@@ -372,9 +372,10 @@ def test_switch_mode_rejects_unknown_and_enable_does_not_move(arm, backend):
 def test_servo_examples_default_hold_and_keep_wxyz(arm, backend, monkeypatch, clock):
     import sys
 
-    from Examples import _common, sdk_status, servo_cartesian_motion_force, servo_joint_position
+    from Examples import sdk_status, servo_cartesian_motion_force, servo_joint_position
 
-    monkeypatch.setattr(_common, "Bestman_Real_Flexiv", lambda *a, **kw: arm)
+    for example in (sdk_status, servo_cartesian_motion_force, servo_joint_position):
+        monkeypatch.setattr(example, "Bestman_Real_Flexiv", lambda *a, **kw: arm)
     monkeypatch.setattr(sys, "argv", ["servo", "Rizon4-123456", "--duration", "0.11"])
     servo_joint_position.main()
     sent = [e for e in backend.events if e[0] == "SendJointPosition"]
@@ -394,14 +395,51 @@ def test_servo_examples_default_hold_and_keep_wxyz(arm, backend, monkeypatch, cl
 def test_servo_example_checks_measured_force_before_sending(arm, backend, monkeypatch, clock):
     import sys
 
-    from Examples import _common, servo_cartesian_motion_force
+    from Examples import servo_cartesian_motion_force
 
-    monkeypatch.setattr(_common, "Bestman_Real_Flexiv", lambda *a, **kw: arm)
+    monkeypatch.setattr(servo_cartesian_motion_force, "Bestman_Real_Flexiv", lambda *a, **kw: arm)
     monkeypatch.setattr(sys, "argv", ["servo", "Rizon4-123456", "--duration", "0.11", "--force-z", "3"])
     backend.state.ext_wrench_in_world = [0.0, 0.0, 20.0, 0.0, 0.0, 0.0]
     with pytest.raises(RuntimeError, match="exceeded"):
         servo_cartesian_motion_force.main()
     assert not any(e[0] == "SendCartesianMotionForce" for e in backend.events)
+    assert backend.events[-1] == ("Stop",)
+
+
+@pytest.mark.parametrize(
+    "name,send",
+    [
+        ("servo_joint_position", "SendJointPosition"),
+        ("servo_cartesian_motion_force", "SendCartesianMotionForce"),
+    ],
+)
+@pytest.mark.parametrize("failure", ["fault", "disconnect", "lag", "interrupt"])
+def test_independent_servo_loops_stop_on_failure(arm, backend, monkeypatch, clock, name, send, failure):
+    import sys
+
+    example = importlib.import_module(f"Examples.{name}")
+    monkeypatch.setattr(example, "Bestman_Real_Flexiv", lambda *a, **kw: arm)
+    monkeypatch.setattr(sys, "argv", [name, "Rizon4-123456", "--duration", "1"])
+    original_send = getattr(backend, send)
+
+    def fail_after_first_command(*args):
+        original_send(*args)
+        if failure == "fault":
+            backend.has_fault = True
+        elif failure == "disconnect":
+            monkeypatch.setattr(backend, "connected", lambda: False)
+        elif failure == "lag":
+            clock.now += 0.2
+        else:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(backend, send, fail_after_first_command)
+    error = (
+        KeyboardInterrupt if failure == "interrupt" else TimeoutError if failure == "lag" else RuntimeError
+    )
+    with pytest.raises(error):
+        example.main()
+    assert sum(event[0] == send for event in backend.events) == 1
     assert backend.events[-1] == ("Stop",)
 
 
