@@ -1,23 +1,30 @@
-# Python RT export verification — 2026-11-16
+# Python RT export verification — updated 2026-11-20
 
 **Official Python RDK 2.1.0 does export the three RT `Stream*` methods and RT modes.**
 The absence reported for this repository applies specifically to its pinned,
-Rizon-compatible **1.9.4.1** wheel. It must not be generalized to every Python RDK
+Rizon-compatible **1.9.3** wheel. It must not be generalized to every Python RDK
 version. RDK 2.1 officially supports **Enlight with robot software v3E.1**, not the
-Rizon 4 / controller 3.11.3–3.11.4 profile used here.
+Rizon 4 / controller 3.11.2 profile used here.
 
 ## Actual binary results
 
 Official CPython 3.12 wheels were downloaded from PyPI and checked against their
 published SHA-256 hashes. Each was extracted into a separate directory and imported
-in a fresh process. The existing application environment was not upgraded.
+in a fresh process for the original November 16 probe. On November 20, version
+1.9.3 was also checked in the project environments on macOS (Python 3.12.13) and
+`djdemo-desktop` (Linux x86_64, Python 3.10.22).
 
-| SDK version | macOS arm64 / Python 3.12.13 | 5090-02 Linux x86_64 / Python 3.12.14 |
+| SDK version | macOS arm64 / Python 3.12.13 | Linux x86_64 (5090-02 unless noted) |
 | --- | --- | --- |
 | 1.8.0 | Import failed: legacy wheel requires a missing Homebrew OpenSSL 3 library; no export conclusion on macOS | All three Stream methods and RT modes absent |
 | 1.9.0 | All three Stream methods and RT modes absent | All three Stream methods and RT modes absent |
+| 1.9.3 | All three Stream methods and RT modes absent | All three Stream methods and RT modes absent (`djdemo-desktop`) |
 | 1.9.4.1 | All three Stream methods and RT modes absent | All three Stream methods and RT modes absent |
 | 2.1.0 | All three Stream methods and RT modes present | All three Stream methods and RT modes present |
+
+The official 1.9.3 wheel's package metadata reports `1.9.3`, while its native
+`flexivrdk.__version__` string reports `1.9.2`. Installation/runtime version checks
+use `importlib.metadata.version("flexivrdk")`, which reads the installed distribution.
 
 The checked methods are:
 
@@ -29,7 +36,7 @@ The checked modes are `RT_JOINT_POSITION`, `RT_JOINT_IMPEDANCE`, `RT_JOINT_TORQU
 and `RT_CARTESIAN_MOTION_FORCE`. `Scheduler` is not exported in any of the
 successfully imported wheels, including 2.1.0.
 
-For 1.9.4.1, direct Python attribute lookup produces, for example:
+In the original 1.9.4.1 probe, direct Python attribute lookup produces, for example:
 
 ```text
 type object 'flexivrdk._flexivrdk.Robot' has no attribute 'StreamJointPosition'
@@ -71,7 +78,7 @@ No `Robot` instance was constructed; no network connection, robot motion or
 
 ## Implications for this Rizon 4 repository
 
-The installed dependency remains `flexivrdk==1.9.4.1`. The 2.1.0 exports are not a
+The installed dependency is pinned to `flexivrdk==1.9.3`. The 2.1.0 exports are not a
 reason to install an Enlight-only SDK on a Rizon 4 deployment. The 1.x manual's
 Python access table explicitly excludes RT functions and modes, consistent with
 the tested 1.x binaries. As checked on this date, `v1.10` is a Draft/WIP release and
@@ -83,7 +90,7 @@ commit `f3b60475237580f5cc488cc2dd7614674e599307` exposes Python target-setting 
 and calls `StreamJointPosition` / `StreamCartesianMotionForce` from a C++ scheduler.
 Its dependency is RDK v1.8. This source was inspected, but the extension was not
 built, integrated or tested against hardware here. A backend for the current
-repository must match RDK 1.9.4.1 and the controller version; compatibility must not
+repository must match RDK 1.9.3 and the controller version; compatibility must not
 be assumed from the fact that another version's wrapper exists.
 
 ## Reproduce the export probe
@@ -105,5 +112,6 @@ availability, and native RT command construction when those data types are prese
 - [Official RDK 1.x API access matrix](https://www.flexiv.com/software/rdk/manual/v1.x/api_overview.html)
 - [Official RDK 2.1 release compatibility](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v2.1)
 - [Official RDK 1.10 Draft/WIP](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v1.10)
+- [PyPI 1.9.3](https://pypi.org/project/flexivrdk/1.9.3/)
 - [PyPI 1.9.4.1](https://pypi.org/project/flexivrdk/1.9.4.1/) and [PyPI 2.1.0](https://pypi.org/project/flexivrdk/2.1.0/)
 - [libpyflexiv source](https://github.com/XenseRobotics-AI/libpyflexiv/tree/f3b60475237580f5cc488cc2dd7614674e599307)

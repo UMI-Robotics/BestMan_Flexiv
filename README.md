@@ -1,6 +1,6 @@
 <img src="docs/BestMan_logo.png" alt="BestMan Logo" width="700"/>
 
-# BestMan Flexiv — Rizon 4 / RDK 1.9.4.1
+# BestMan Flexiv — Rizon 4 / RDK 1.9.3
 
 A Python interface for non-real-time control of **Rizon 4 (7 joints, no external axes)**.
 It supports joint and Cartesian motion, hybrid motion-force control, active and passive
@@ -9,12 +9,17 @@ tool configuration, and serial Robotiq grippers.
 
 ## SDK version
 
-As of November 16, 2026, Rizon 4 uses **`flexivrdk==1.9.4.1`**, compatible with controller
-software **v3.11.3 / v3.11.4**. Version 2.1.0 on PyPI targets the **Enlight series** and
-is not an upgrade path for Rizon 4. The 2.2 release page is still marked WIP.
-Keep the SDK version pinned when installing.
+This project pins **`flexivrdk==1.9.3`** for **Rizon 4 with controller software
+v3.11.2**. Package installation, setup scripts and runtime checks all enforce this
+version. An existing 1.9.4.1 installation is replaced by 1.9.3 when installing this
+project; no version flag or dependency-file edit is needed.
 
-- [RDK 1.9.4.1 release notes](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v1.9.4.1)
+The native SDK still checks the controller pairing during connection. RDK 2.x
+supports Enlight and is not compatible with this Rizon 4 profile. In 1.9.3, waypoint
+batches use controller-selected timing: omit `durations` or pass only zeros.
+Nonzero per-waypoint durations are rejected before any command is sent.
+
+- [RDK 1.9.3 release notes](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v1.9.3)
 - [RDK 2.1 Enlight compatibility](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v2.1)
 - [Migration guide and force-control APIs](docs/SDK_MIGRATION.md)
 - [Validation results and simulation limitations](docs/VALIDATION.md)
@@ -32,11 +37,21 @@ bash Install/setup.sh
 .venv/bin/python Examples/display_states.py Rizon4-123456
 ```
 
-For a downloaded ZIP, extract it and run `bash Install/setup.sh` inside the project.
-The script creates `.venv`, installs this project and the pinned SDK, and checks imports.
+For a downloaded ZIP, extract it and run the same setup command inside the project.
+The script creates `.venv`, installs this project and RDK 1.9.3, and checks imports.
+It uses a regular package install; rerun setup after updating the checkout.
 It locates the project from its own file, so it also works when launched from another
 directory. Use `--extras gripper`, `--extras camera`, or `--extras dev` when needed;
 extras can be combined as `--extras dev,gripper`.
+`--rdk-version 1.9.3` remains accepted for existing commands, but is optional.
+
+For the existing `dj-stuff` Conda environment and controller **3.11.2**, install into
+that environment directly; no additional `.venv` is needed:
+
+```bash
+conda activate dj-stuff
+python -m pip install -e .
+```
 
 After `source .venv/bin/activate`, use `python Examples/display_states.py ...` or
 `python -m Examples.display_states ...`. The installed package and its URDF resources
@@ -102,10 +117,10 @@ python -m Examples.servo_cartesian_motion_force Rizon4-123456 --force-z 3
 python -m Examples.sdk_status Rizon4-123456
 ```
 
-The Python RDK 1.9.4.1 wheel exposes NRT `Send*` calls, **not** RT `Stream*` calls or
+The Python RDK 1.9.3 wheel exposes NRT `Send*` calls, **not** RT `Stream*` calls or
 RT modes. This is version-specific: **Python RDK 2.1.0 does export RT calls**, but it
 supports Enlight, not this Rizon 4 profile. See the [actual binary probe results](docs/PYTHON_RT_PROBE.md).
-For Rizon 4 on 1.9.4.1, RT execution requires a compatible C++ backend, which can
+For Rizon 4 on 1.9.3, RT execution requires a compatible C++ backend, which can
 also be exposed to Python. `Enable()` is the Rizon motor-enable API; this version
 has no Python `ServoOn()`/`Disable()` robot API, and `Brake()` is restricted to medical models.
 

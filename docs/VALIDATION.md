@@ -1,4 +1,30 @@
-# Validation — 2026-11-16
+# Validation
+
+## 0.3.1 — RDK 1.9.3 / controller 3.11.2 (2026-11-20)
+
+Package metadata, runtime checks, the Conda YAML and both SDK installation scripts
+now pin `flexivrdk==1.9.3`. This pairing targets controller software **3.11.2**.
+The independent examples and plain wxyz input/output conventions are unchanged.
+
+- macOS arm64 / Python 3.12.13 / official RDK 1.9.3: **188 tests passed**.
+- Ruff, shell syntax and `git diff --check`: passed.
+- The actual 1.9.3 binary still exports 53 public Robot members. Its
+  `NrtCartesianCmd` has no duration field: batch construction uses seven arguments;
+  omitted/all-zero durations work, and nonzero durations fail before dispatch.
+- Version mismatches are rejected before connection. The native SDK/controller
+  handshake remains enabled and its errors propagate unchanged.
+- Python RT methods and modes are absent in both the macOS wheel and the Linux
+  x86_64 wheel installed in `djdemo-desktop`'s Python 3.10.22 `dj-stuff` environment.
+- `Maintenance.SetPtpConfig` and `ptp_config` are absent in 1.9.3; the SDK coverage
+  guide no longer advertises them for this profile.
+- The setup command completed with 1.9.3 and verified installed imports with
+  `python -I`. It now uses a regular package install, avoiding editable `.pth`
+  hooks. Local diagnosis found macOS's hidden-file flag caused Python to skip
+  the generated editable hook; the ordinary install passed outside-checkout tests.
+
+The existing IKPy fixed-link-mask warning remains. No robot was connected, enabled
+or moved for these checks. Earlier results below retain the SDK versions actually
+tested at the time; they are not evidence of 1.9.3 controller behavior.
 
 ## 2026-11-20 — independent examples and installation paths
 
@@ -95,7 +121,7 @@ Linux checks ran in the independent directory
 public PyPI download was slow. DJ-Sim/DJ-demo source and environments were not modified.
 No robot was enabled or commanded.
 
-Before hardware use, verify controller 3.11.3/3.11.4, actual serial number, active tool
+For that historical 1.9.4.1 profile, controller 3.11.3/3.11.4 is required. Verify the actual serial number, active tool
 parameters and WORLD/base calibration. Start with read-only states and a checked
 workspace, then perform contact-free zeroing and a bounded low-force test. Actual
 force tracking, overshoot, contact loss and stop response remain hardware checks.

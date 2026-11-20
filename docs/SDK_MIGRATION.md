@@ -1,16 +1,16 @@
 # Rizon 4 SDK migration and force-control API
 
-Baseline: repository main commit `68e94e8`; target official RDK `v1.9.4.1`, commit
-`5338cc0316f34d7704be295bbc24b6e6f082de12`. Sources checked on 2026-11-16:
+Baseline: repository main commit `68e94e8`; target official RDK `v1.9.3`, commit
+`bbb7ffc1feb125f6078eb99d2048264ceaab65e8`. Sources checked on 2026-11-20:
 
-- [1.9.4.1 compatibility](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v1.9.4.1): controller 3.11.3/3.11.4.
+- [1.9.3 compatibility](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v1.9.3): controller 3.11.2.
 - [2.1 compatibility](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v2.1): Enlight only.
 - [2.2](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v2.2): WIP.
-- [Versioned Robot API header](https://github.com/flexivrobotics/flexiv_rdk/blob/v1.9.4.1/include/flexiv/rdk/robot.hpp).
-- [Official motion-force example](https://github.com/flexivrobotics/flexiv_rdk/blob/v1.9.4.1/example_py/intermediate4_non_realtime_cartesian_motion_force_control.py).
+- [Versioned Robot API header](https://github.com/flexivrobotics/flexiv_rdk/blob/v1.9.3/include/flexiv/rdk/robot.hpp).
+- [Official motion-force example](https://github.com/flexivrobotics/flexiv_rdk/blob/v1.9.3/example_py/intermediate4_non_realtime_cartesian_motion_force_control.py).
 
 The highest PyPI version is not the correct SDK for this robot. Dependencies and
-runtime checks pin 1.9.4.1, rather than using a range which could install 2.x.
+runtime checks pin 1.9.3, rather than using a range which could install 2.x.
 
 ## Existing problems addressed
 
@@ -122,3 +122,10 @@ asynchronous primitive/plan control, IO/global variables, and native service acc
 The four exclusions are medical-only brakes, two external-axis/positioner operations,
 and the RT-only timeliness setting. No RT Stream* methods or RT modes are exported
 by the tested Python wheel. All pose/servo/waypoint data remains raw wxyz.
+
+## RDK 1.9.3 waypoint commands
+
+`NrtCartesianCmd` in this version has no `duration` field or constructor argument.
+`send_cartesian_waypoints()` constructs the actual seven-argument SDK command and
+lets the controller choose waypoint timing. Its `durations` parameter accepts only
+`None` or zeros; explicit nonzero durations raise before any command is sent.

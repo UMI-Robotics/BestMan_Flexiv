@@ -1,17 +1,17 @@
 # Python SDK coverage and servo control
 
-Audit date: 2026-11-16. Target: **Rizon 4, flexivrdk 1.9.4.1**, controller 3.11.3/3.11.4.
+Audit date: 2026-11-20. Target: **Rizon 4, flexivrdk 1.9.3**, controller 3.11.2.
 The inventory is checked against the installed official Python binary, not inferred
 from C++ documentation. The Robot class exports **53 public methods/accessors**:
 **49 are covered**, with four documented exclusions for this robot/Python profile.
 
 ## What “servo” means in this Python interface
 
-The Rizon-compatible 1.9.4.1 Python wheel exposes NRT modes and
+The Rizon-compatible 1.9.3 Python wheel exposes NRT modes and
 `SendJointPosition` / `SendCartesianMotionForce`.
 It does **not** export `StreamJointPosition`, `StreamJointTorque`,
 `StreamCartesianMotionForce`, `Scheduler`, or RT modes. Do not use a C++ API name
-as if it existed in Python. This remains true of the Linux wheel tested on 5090-02.
+as if it existed in Python. This is verified against the macOS arm64 and Linux x86_64 wheels.
 
 This limitation must not be generalized to all versions: **official Python RDK
 2.1.0 exports the RT Stream methods and modes**, verified on macOS and Linux, but
@@ -142,13 +142,15 @@ substitute uncalibrated offline IK results for the joint targets.
 ```python
 arm.configure_force_control([False] * 6, super_primitive=True)
 arm.send_cartesian_waypoints(
-    poses, joint_positions, durations=[1.0] * len(poses),
+    poses, joint_positions,
     max_linear_vel=0.03,
 )
 ```
 
 Each pose is a plain `[x,y,z,qw,qx,qy,qz]` list. Optional `wrenches` and `velocities`
-have one six-element vector per waypoint. Duration 0 lets the SDK choose timing.
+have one six-element vector per waypoint. RDK 1.9.3 chooses timing internally and
+has no per-waypoint duration field. Omit `durations` or pass only zeros; nonzero
+values are rejected before command dispatch.
 The SDK `NrtCartesianCmd` objects are constructed internally; users do not need to
 create pose objects. Configure force axes explicitly before nonzero wrench targets.
 Dispatch does not wait for batch completion. Monitor the task and stop explicitly;
@@ -191,7 +193,7 @@ custom BestMan wrapper or has been exercised against hardware.
 | `Model` | `sdk_interface("Model", gravity_vector=[0,0,-9.81])`: native model dynamics and kinematics; requires RDK Professional. |
 | `Safety` | `sdk_interface("Safety", password=...)`: native safety settings; explicit password required and not stored on the wrapper. No limits are changed by constructing it. |
 | `FileIO` | `sdk_interface("FileIO")`: native project/trajectory exchange and collision meshes. |
-| `Maintenance` | `sdk_interface("Maintenance")`: native torque-sensor calibration and PTP configuration. |
+| `Maintenance` | `sdk_interface("Maintenance")`: native torque-sensor calibration. RDK 1.9.3 does not expose PTP configuration methods. |
 
 Native calls obey their own SDK mode/license restrictions. Directly changing mode,
 force settings or the active tool through `arm.robot` or a native service bypasses
@@ -202,8 +204,8 @@ executed during development.
 
 ## Sources
 
-- [RDK v1.9.4.1 Robot header](https://github.com/flexivrobotics/flexiv_rdk/blob/v1.9.4.1/include/flexiv/rdk/robot.hpp)
-- [RDK data types and waypoint commands](https://github.com/flexivrobotics/flexiv_rdk/blob/v1.9.4.1/include/flexiv/rdk/data.hpp)
-- [Official Python joint NRT example](https://github.com/flexivrobotics/flexiv_rdk/blob/v1.9.4.1/example_py/intermediate1_non_realtime_joint_position_control.py)
-- [Official Python motion-force example](https://github.com/flexivrobotics/flexiv_rdk/blob/v1.9.4.1/example_py/intermediate4_non_realtime_cartesian_motion_force_control.py)
-- [RDK 1.9.4.1 package](https://pypi.org/project/flexivrdk/1.9.4.1/)
+- [RDK v1.9.3 Robot header](https://github.com/flexivrobotics/flexiv_rdk/blob/v1.9.3/include/flexiv/rdk/robot.hpp)
+- [RDK data types and waypoint commands](https://github.com/flexivrobotics/flexiv_rdk/blob/v1.9.3/include/flexiv/rdk/data.hpp)
+- [Official Python joint NRT example](https://github.com/flexivrobotics/flexiv_rdk/blob/v1.9.3/example_py/intermediate1_non_realtime_joint_position_control.py)
+- [Official Python motion-force example](https://github.com/flexivrobotics/flexiv_rdk/blob/v1.9.3/example_py/intermediate4_non_realtime_cartesian_motion_force_control.py)
+- [RDK 1.9.3 package](https://pypi.org/project/flexivrdk/1.9.3/)

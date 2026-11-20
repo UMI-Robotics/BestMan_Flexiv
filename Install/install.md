@@ -14,16 +14,24 @@ bash Install/setup.sh
 ```
 
 `setup.sh` locates the project from its own location, creates `.venv`, installs the
-project in editable mode with the pinned official SDK, and checks imports. It also
+project as a regular package with official RDK 1.9.3, and checks installed imports
+in isolated Python mode (without relying on the checkout or `PYTHONPATH`). It also
 works when invoked by absolute path from another directory, including paths with spaces.
 It does not change shell profiles or `PYTHONPATH`, and does not connect to a robot.
 An existing `.venv` is reused. Python 3.12 is preferred; 3.10 is also accepted.
-RDK 1.9.4.1 has no Python 3.11 wheel, so the script skips that interpreter.
+The supported RDK wheels use Python 3.10 or 3.12, so the script skips Python 3.11.
+All installation paths pin **1.9.3** for controller **3.11.2**, including when upgrading
+an existing environment. The optional `--rdk-version 1.9.3` flag is retained for existing
+commands; other SDK versions are rejected.
+
+Rerun setup after updating the checkout to refresh the installed package. For active
+library development, the editable pip installation below is also supported.
 
 Options:
 
 ```bash
 bash Install/setup.sh --python python3.12
+bash Install/setup.sh --rdk-version 1.9.3
 bash Install/setup.sh --extras dev
 bash Install/setup.sh --extras gripper
 bash Install/setup.sh --extras dev,gripper,camera
@@ -38,7 +46,7 @@ robot motion and force-control examples. Supply actual device serials/ports via 
 From the project directory, in an activated Python environment:
 
 ```bash
-python -m pip install -e .
+python -m pip install -e .  # Includes flexivrdk==1.9.3
 python -m Examples.display_states Rizon4-123456
 ```
 
@@ -46,8 +54,14 @@ For a new Windows environment, first run `py -3.12 -m venv .venv` and activate w
 `.venv\Scripts\Activate.ps1` in PowerShell. For a new Linux/macOS environment, use
 `python3.12 -m venv .venv` and `source .venv/bin/activate`.
 
+For the existing `dj-stuff` Conda environment, use `conda activate dj-stuff` and the
+pip command above from this project directory. It installs the matching SDK and
+project together; a new `.venv` is unnecessary. Reinstalling the project enforces
+the exact 1.9.3 dependency, even if a different SDK was previously installed.
+
 Conda alternative: `conda env create -f Install/basic_env_py312.yaml`, then
 `conda activate bestman-flexiv` and `python -m pip install -e .`.
+The YAML already pins RDK 1.9.3; no path or version edits are required.
 A regular non-editable `python -m pip install .` also packages the examples and Rizon 4 URDF.
 
 ## Imports, resources and example entry points
@@ -74,9 +88,21 @@ Teaching and replay use plain `[x,y,z,qw,qx,qy,qz]` lists throughout (metres, wx
 
 ## Controller requirements
 
-Expected SDK: **1.9.4.1**. RDK 2.1 targets Enlight and is not compatible with Rizon 4.
-The Rizon controller must run software **3.11.3 or 3.11.4**, have an RDK license and
-be reachable in Auto (Remote) mode. The SDK checks compatibility at connection time.
+This project requires **RDK 1.9.3** and **controller software 3.11.2**, as documented
+in the official [1.9.3 release](https://github.com/flexivrobotics/flexiv_rdk/releases/tag/v1.9.3).
+The controller must have an RDK license and be reachable in Auto (Remote) mode.
+The SDK checks compatibility at connection time. Keep that check enabled and install
+the matching client; this fix does not require changing controller firmware.
+RDK 2.x targets Enlight and is not compatible with this Rizon 4 profile.
+Waypoint timing is selected by the controller. Pass `durations=None` or all zeros;
+nonzero values are rejected before mode changes or commands.
+
+To install only the SDK into the active environment:
+
+```bash
+bash Install/load_flexivrdk.sh
+```
+
 Use the actual robot serial number in place of `Rizon4-123456`. Optional `--interface`
 is a local NIC IPv4 address, not the robot IP. Python NRT frequency is 1–100 Hz.
 

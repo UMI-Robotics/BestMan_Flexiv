@@ -1,4 +1,4 @@
-"""Rizon 4 interface for Flexiv RDK 1.9.4.1 (non-real-time Python control)."""
+"""Rizon 4 interface for Flexiv RDK 1.9.3 (non-real-time Python control)."""
 
 from __future__ import annotations
 
@@ -35,9 +35,9 @@ class Bestman_Real_Flexiv:
         if not isinstance(robot_sn, str) or not robot_sn.replace(" ", "").startswith("Rizon4-"):
             raise ValueError("Use a Rizon 4 serial number such as Rizon4-123456, not robot/local IPs")
         installed = version("flexivrdk")
-        if installed != "1.9.4.1":
+        if installed != "1.9.3":
             raise RuntimeError(
-                f"Rizon 4 requires the tested flexivrdk==1.9.4.1; found {installed}. "
+                f"Rizon 4 requires flexivrdk==1.9.3 for controller 3.11.2; found {installed}. "
                 "RDK 2.x targets Enlight, not Rizon 4."
             )
         import flexivrdk
@@ -50,6 +50,7 @@ class Bestman_Real_Flexiv:
             )
 
         self.rdk = flexivrdk
+        self.rdk_version = installed
         self.mode = flexivrdk.Mode
         self.log = logging.getLogger(__name__)
         self.robot = (
@@ -801,7 +802,8 @@ class Bestman_Real_Flexiv:
 
         Configure force axes first with super_primitive=True. Supply one 7-joint
         target per pose as required by RDK; joint_targets must match the Cartesian
-        path/tool/world calibration. Durations are seconds (0 = SDK chooses timing).
+        path/tool/world calibration. RDK 1.9.3 chooses waypoint timing internally.
+        durations accepts only None or zeros; nonzero values are unsupported.
         Returns after dispatch, without waiting for execution to finish.
         """
         poses, joint_positions = list(poses), list(joint_positions)
@@ -813,6 +815,11 @@ class Bestman_Real_Flexiv:
         durations = [0.0] * count if durations is None else vector(durations, count, "durations", lower=0)
         if len(wrenches) != count or len(velocities) != count:
             raise ValueError("wrenches and velocities must match the waypoint count")
+        if any(durations):
+            raise NotImplementedError(
+                f"RDK {self.rdk_version} does not support explicit waypoint durations; "
+                "omit durations or use only zeros for SDK-selected timing."
+            )
         joints = [self._joints(q) for q in joint_positions]
         arguments = [
             self._cartesian_arguments(
@@ -823,7 +830,8 @@ class Bestman_Real_Flexiv:
         self._require_cartesian(mode=self.mode.NRT_SUPER_PRIMITIVE)
         if any(w != 0 and not enabled for args in arguments for w, enabled in zip(args[1], self._force_axes)):
             raise ValueError("Nonzero waypoint wrench requires enabled force-control axes")
-        commands = [self.rdk.NrtCartesianCmd(*args, duration) for args, duration in zip(arguments, durations)]
+        # The 1.9.3 constructor has seven arguments and no duration field.
+        commands = [self.rdk.NrtCartesianCmd(*args) for args in arguments]
         with self._control():
             self.robot.SendMultiCartesianMotionForce(commands, joints)
 

@@ -128,20 +128,32 @@ def test_inertia_and_contact_torque_ranges_match_sdk(arm, backend):
     assert backend.events == []
 
 
-def test_onboard_waypoints_use_real_sdk_commands_and_wxyz(arm, backend):
+@pytest.mark.parametrize("durations", [None, [0.0, 0.0]])
+def test_onboard_waypoints_use_real_sdk_commands_and_wxyz(arm, backend, durations):
     poses = [[0.4, 0.1, 0.5, 0.8, 0.2, 0.4, 0.4], [0.41, 0.1, 0.5, 0.8, 0.2, 0.4, 0.4]]
     arm.configure_force_control([False] * 6, super_primitive=True)
     arm.set_cartesian_impedance([10.0] * 6)
-    arm.send_cartesian_waypoints(poses, [[0.0] * 7, [0.1] * 7], durations=[1.0, 2.0])
+    arm.send_cartesian_waypoints(poses, [[0.0] * 7, [0.1] * 7], durations=durations)
     name, commands, joints = backend.events[-1]
     assert name == "SendMultiCartesianMotionForce"
     assert isinstance(commands[0], flexivrdk.NrtCartesianCmd)
     assert list(commands[0].pose_d) == poses[0]
-    assert commands[1].duration == 2.0
+    assert not hasattr(commands[1], "duration")
     assert commands[0].max_linear_vel == arm.config.max_linear_vel
     assert joints == [[0.0] * 7, [0.1] * 7]
     with pytest.raises(RuntimeError):
         arm.servo_cartesian_motion_force(poses[0], [0.0] * 6)
+
+
+@pytest.mark.parametrize("durations", [[1.0, 2.0], [0.0, 0.5]])
+def test_explicit_waypoint_durations_follow_sdk_capability(arm, backend, durations):
+    poses = [arm.get_current_eef_pose(), arm.get_current_eef_pose()]
+    joints = [[0.0] * 7, [0.1] * 7]
+    # Even in IDLE, reject unsupported timing before checking/configuring modes.
+    with pytest.raises(NotImplementedError, match="explicit waypoint durations"):
+        arm.send_cartesian_waypoints(poses, joints, durations=durations)
+    assert backend.events == []
+    assert backend.mode() == flexivrdk.Mode.IDLE
 
 
 @pytest.mark.parametrize(

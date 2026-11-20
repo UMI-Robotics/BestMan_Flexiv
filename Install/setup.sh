@@ -5,6 +5,7 @@ set -euo pipefail
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 python_bin=""
 extras=""
+rdk_version="1.9.3"
 while (( $# )); do
     case "$1" in
         --python)
@@ -17,8 +18,13 @@ while (( $# )); do
             extras="$2"
             shift 2
             ;;
+        --rdk-version)
+            [[ $# -ge 2 && -n "$2" ]] || { echo "--rdk-version requires 1.9.3" >&2; exit 2; }
+            rdk_version="$2"
+            shift 2
+            ;;
         -h|--help)
-            echo "Usage: bash Install/setup.sh [--python python3.12] [--extras dev,gripper,camera]"
+            echo "Usage: bash Install/setup.sh [--python python3.12] [--extras dev,gripper,camera] [--rdk-version 1.9.3]"
             exit 0
             ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -27,6 +33,11 @@ done
 
 if [[ -n "$extras" && ! "$extras" =~ ^(dev|gripper|camera)(,(dev|gripper|camera))*$ ]]; then
     echo "Supported extras: dev, gripper, camera" >&2
+    exit 2
+fi
+
+if [[ "$rdk_version" != "1.9.3" ]]; then
+    echo "This project pins RDK 1.9.3 for controller software 3.11.2." >&2
     exit 2
 fi
 
@@ -49,7 +60,9 @@ if [[ -z "$python_bin" ]]; then
     echo "Install Python 3.12, then rerun this command (or pass --python python3.12)." >&2
     exit 1
 fi
-"$python_bin" -c 'import sys; assert sys.version_info[:2] in ((3, 10), (3, 12)), "Use Python 3.10 or 3.12; RDK 1.9.4.1 has no Python 3.11 wheel"'
+"$python_bin" -c 'import sys; assert sys.version_info[:2] in ((3, 10), (3, 12)), "Use Python 3.10 or 3.12 for the supported RDK wheels"'
+controller_versions="3.11.2"
+echo "Installing RDK $rdk_version for controller software $controller_versions."
 if [[ ! -x "$project_dir/.venv/bin/python" ]]; then
     "$python_bin" -m venv "$project_dir/.venv"
 fi
@@ -61,7 +74,8 @@ install_target="$project_dir"
 if [[ -n "$extras" ]]; then
     install_target="$install_target[$extras]"
 fi
-"$venv_python" -m pip install -e "$install_target"
-"$venv_python" -c 'from importlib.metadata import version; from Robotics_API import Bestman_Real_Flexiv; import flexivrdk; assert version("flexivrdk") == "1.9.4.1"; print("Ready: BestMan Flexiv / RDK 1.9.4.1")'
+"$venv_python" -m pip install "$install_target" "flexivrdk==$rdk_version"
+# Verify installed imports without relying on the checkout or PYTHONPATH.
+"$venv_python" -I -c 'import sys; from importlib.metadata import version; from Robotics_API import Bestman_Real_Flexiv; import Examples; import flexivrdk; assert version("flexivrdk") == sys.argv[1]; print(f"Ready: BestMan Flexiv / RDK {sys.argv[1]}")' "$rdk_version"
 printf '\nRun an independent example:\n  "%s" "%s" Rizon4-123456\n' \
     "$venv_python" "$project_dir/Examples/display_states.py"

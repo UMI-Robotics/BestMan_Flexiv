@@ -1,4 +1,4 @@
-"""Send NRT joint targets directly at 1-100 Hz with Rizon RDK 1.9.4.1."""
+"""Send NRT joint targets directly at 1-100 Hz with Rizon RDK 1.9.3."""
 
 import argparse
 import math

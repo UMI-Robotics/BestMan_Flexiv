@@ -1,3 +1,4 @@
+# Rizon 4 / controller 3.11.2 profile.
 name: bestman-flexiv
 channels:
   - conda-forge
@@ -5,7 +6,7 @@ dependencies:
   - python=3.12
   - pip
   - pip:
-      - flexivrdk==1.9.4.1
+      - flexivrdk==1.9.3
       - numpy
       - scipy
       - ikpy

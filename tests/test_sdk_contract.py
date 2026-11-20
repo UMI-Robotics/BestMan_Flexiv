@@ -16,7 +16,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_all_wrapper_robot_methods_exist_in_real_sdk():
-    assert version("flexivrdk") == "1.9.4.1"
+    assert version("flexivrdk") == "1.9.3"
     tree = ast.parse((ROOT / "Robotics_API/Bestman_Real_Flexiv.py").read_text())
     methods = {
         node.func.attr
@@ -60,6 +60,11 @@ def test_all_wrapper_robot_methods_exist_in_real_sdk():
 def test_binary_signatures_for_control_calls(method, arguments):
     signature = getattr(flexivrdk.Robot, method).__doc__.splitlines()[0]
     assert re.findall(r"\b(\w+): ", signature) == arguments
+
+
+def test_rdk193_cartesian_command_has_no_duration():
+    assert not hasattr(flexivrdk.NrtCartesianCmd, "duration")
+    assert "duration:" not in flexivrdk.NrtCartesianCmd.__init__.__doc__
 
 
 def test_binary_state_and_tool_fields():
@@ -143,8 +148,8 @@ def test_entire_python_robot_inventory_is_documented_and_accounted_for():
     assert actual - called == {"Brake", "LockExternalAxes", "SyncWithPositioner", "SetTimelinessFailureLimit"}
 
 
-def test_rizon_1_9_4_1_binding_excludes_rt_and_servo_on_api():
-    assert version("flexivrdk") == "1.9.4.1"  # RDK 2.1.0 DOES export RT methods/modes.
+def test_rizon_1_9_3_binding_excludes_rt_and_servo_on_api():
+    assert version("flexivrdk") == "1.9.3"  # RDK 2.1.0 DOES export RT methods/modes.
     for name in (
         "StreamJointPosition",
         "StreamJointTorque",

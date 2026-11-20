@@ -1,5 +1,6 @@
 import importlib
 from dataclasses import replace
+from unittest.mock import Mock
 
 import flexivrdk
 import numpy as np
@@ -212,11 +213,31 @@ def test_controller_model_and_dof_must_match(backend):
         Bestman_Real_Flexiv("Rizon4-123456", robot=backend)
 
 
-def test_enlight_sdk_rejected_before_constructing_robot(monkeypatch, backend):
+@pytest.mark.parametrize("sdk_version", ["1.9.2", "1.9.4", "1.9.4.1", "2.1.0"])
+def test_untested_sdk_rejected_before_constructing_robot(monkeypatch, backend, sdk_version):
     module = importlib.import_module("Robotics_API.Bestman_Real_Flexiv")
-    monkeypatch.setattr(module, "version", lambda name: "2.1.0")
-    with pytest.raises(RuntimeError, match="Enlight"):
+    monkeypatch.setattr(module, "version", lambda name: sdk_version)
+    with pytest.raises(RuntimeError, match="Rizon 4 requires"):
         Bestman_Real_Flexiv("Rizon4-123456", robot=backend)
+    assert backend.events == []
+
+
+def test_rdk193_accepts_injected_robot(monkeypatch, backend):
+    sdk_version = "1.9.3"
+    module = importlib.import_module("Robotics_API.Bestman_Real_Flexiv")
+    monkeypatch.setattr(module, "version", lambda name: sdk_version)
+    arm = Bestman_Real_Flexiv("Rizon4-123456", robot=backend)
+    assert arm.robot is backend
+    assert arm.rdk_version == sdk_version
+    assert backend.events == []
+
+
+def test_native_sdk_version_handshake_is_not_bypassed(monkeypatch):
+    constructor = Mock(spec=flexivrdk.Robot, side_effect=RuntimeError("client is incompatible with robot"))
+    monkeypatch.setattr(flexivrdk, "Robot", constructor)
+    with pytest.raises(RuntimeError, match="client is incompatible"):
+        Bestman_Real_Flexiv("Rizon4-123456")
+    constructor.assert_called_once_with("Rizon4-123456", [])
 
 
 def test_rizon4_fk_ik_with_full_tool_transform(arm, backend):
