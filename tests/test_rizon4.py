@@ -201,7 +201,7 @@ def test_initialize_timeout_and_fault_recovery(arm, backend):
     assert backend.events[-1] == ("Stop",)
 
 
-@pytest.mark.parametrize("sn", ["192.168.2.100", "Rizon4s-123456", "Rizon4R-123456"])
+@pytest.mark.parametrize("sn", ["192.168.2.100", "Rizon4s-123456", "Rizon4M-123456"])
 def test_wrong_model_or_old_ip_constructor_rejected(backend, sn):
     with pytest.raises(ValueError):
         Bestman_Real_Flexiv(sn, robot=backend)
@@ -217,7 +217,7 @@ def test_controller_model_and_dof_must_match(backend):
 def test_untested_sdk_rejected_before_constructing_robot(monkeypatch, backend, sdk_version):
     module = importlib.import_module("Robotics_API.Bestman_Real_Flexiv")
     monkeypatch.setattr(module, "version", lambda name: sdk_version)
-    with pytest.raises(RuntimeError, match="Rizon 4 requires"):
+    with pytest.raises(RuntimeError, match="requires flexivrdk"):
         Bestman_Real_Flexiv("Rizon4-123456", robot=backend)
     assert backend.events == []
 

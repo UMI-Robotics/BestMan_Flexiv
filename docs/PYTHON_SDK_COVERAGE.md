@@ -1,6 +1,6 @@
 # Python SDK coverage and servo control
 
-Audit date: 2026-11-20. Target: **Rizon 4, flexivrdk 1.9.3**, controller 3.11.2.
+Audit date: 2026-11-20. Target: **Rizon 4/4R, flexivrdk 1.9.3**, controller 3.11.2.
 The inventory is checked against the installed official Python binary, not inferred
 from C++ documentation. The Robot class exports **53 public methods/accessors**:
 **49 are covered**, with four documented exclusions for this robot/Python profile.
@@ -82,7 +82,7 @@ python -m Examples.sdk_status Rizon4-123456
 | `Enable` | `enable()` / `initialize_robot()`; no Python `ServoOn` or `Disable` method in this version. |
 | `ExecutePlan` | `execute_plan()`; name/index overload, async start, continue_execution and start synchronization. |
 | `ExecutePrimitive` | `execute_primitive()`; async start plus `wait_for_primitive(state, value)`. |
-| `LockExternalAxes` | Not wrapped: this Rizon 4 profile rejects external axes. |
+| `LockExternalAxes` | Not wrapped: this Rizon 4/4R profile rejects external axes. |
 | `PausePlan` | `pause_plan(True/False)`. |
 | `RunAutoRecovery` | `run_auto_recovery()`; explicit recovery state required, reboot afterwards. |
 | `SendCartesianMotionForce` | `servo_cartesian_pose()` / `servo_cartesian_motion_force()` and existing move methods. |

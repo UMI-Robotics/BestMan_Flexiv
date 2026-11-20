@@ -1,4 +1,4 @@
-"""Rizon 4 interface for Flexiv RDK 1.9.3 (non-real-time Python control)."""
+"""Rizon 4/4R interface for Flexiv RDK 1.9.3 (non-real-time Python control)."""
 
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .config import RobotConfig, integer, pose_vector, positive, vector
+from .config import MODEL_URDFS, RobotConfig, integer, model_from_serial, pose_vector, positive, vector
 
 
 class Bestman_Real_Flexiv:
-    """Single Rizon 4, seven joints, no external axes.
+    """Single Rizon 4 or 4R, seven joints, no external axes.
 
     Connect by serial number, e.g. ``Bestman_Real_Flexiv('Rizon4-123456')``.
     Construction reads information but does not enable or move the robot.
@@ -28,17 +28,20 @@ class Bestman_Real_Flexiv:
     def __init__(
         self, robot_sn, frequency=None, *, network_interface_whitelist=None, config=None, robot=None
     ):
-        self.config = config if isinstance(config, RobotConfig) else RobotConfig.load(config)
+        model = model_from_serial(robot_sn)
+        self.config = (
+            config if isinstance(config, RobotConfig) else RobotConfig.load(config, default_model=model)
+        )
+        if self.config.model != model:
+            raise ValueError(f"Configuration model {self.config.model} does not match serial model {model}")
         self.frequency = positive(self.config.frequency if frequency is None else frequency, "frequency")
         if not 1 <= self.frequency <= 100:
             raise ValueError("Python NRT command frequency must be in [1, 100] Hz")
-        if not isinstance(robot_sn, str) or not robot_sn.replace(" ", "").startswith("Rizon4-"):
-            raise ValueError("Use a Rizon 4 serial number such as Rizon4-123456, not robot/local IPs")
         installed = version("flexivrdk")
         if installed != "1.9.3":
             raise RuntimeError(
-                f"Rizon 4 requires flexivrdk==1.9.3 for controller 3.11.2; found {installed}. "
-                "RDK 2.x targets Enlight, not Rizon 4."
+                f"Rizon 4/4R requires flexivrdk==1.9.3 for controller 3.11.2; found {installed}. "
+                "RDK 2.x targets Enlight, not this Rizon profile."
             )
         import flexivrdk
 
@@ -57,10 +60,13 @@ class Bestman_Real_Flexiv:
             robot if robot is not None else flexivrdk.Robot(robot_sn, network_interface_whitelist or [])
         )
         info = self.robot.info()
-        if info.model_name.replace(" ", "").lower() != "rizon4" or info.DoF != 7 or info.DoF_e:
+        if info.model_name.replace(" ", "").casefold() != model.casefold() or info.DoF != 7 or info.DoF_e:
             raise ValueError(
-                "This configuration supports Rizon 4 with exactly seven joints and no external axes"
+                f"Expected {model} with exactly seven joints and no external axes; "
+                f"controller reports {info.model_name}, DoF={info.DoF}, DoF_e={info.DoF_e}"
             )
+        if info.serial_num.replace(" ", "") != robot_sn.replace(" ", ""):
+            raise ValueError(f"Connected controller serial {info.serial_num} does not match {robot_sn}")
         self.gripper = None
         self.robot_states = self.robot.states()
         self._robot_chain = None
@@ -74,7 +80,7 @@ class Bestman_Real_Flexiv:
         if self._robot_chain is None:
             from ikpy.chain import Chain
 
-            path = Path(__file__).resolve().parents[1] / "Asset/flexiv_rizon4_kinematics.urdf"
+            path = Path(__file__).resolve().parents[1] / "Asset" / MODEL_URDFS[self.config.model]
             self._robot_chain = Chain.from_urdf_file(
                 str(path), active_links_mask=[False] + [True] * 7 + [False]
             )
@@ -651,7 +657,7 @@ class Bestman_Real_Flexiv:
 
         Returns a plain [x,y,z,qw,qx,qy,qz] list.
         It equals RDK WORLD only if the controller world/base transform is identity.
-        This kinematic URDF has blurred dynamics; do not use it for torque control.
+        These models are for kinematics only; do not use them for torque control.
         """
         q = self._joints(joint_values)
         matrix = self.robot_chain.forward_kinematics([0.0] + q + [0.0]) @ self._tool_matrix()

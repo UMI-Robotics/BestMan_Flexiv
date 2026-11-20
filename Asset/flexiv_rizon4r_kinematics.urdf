@@ -1,0 +1,70 @@
+<?xml version="1.0"?>
+<!-- Derived from Flexiv flexiv_description (Apache-2.0), commit 2fc4f62329fa95e0280b7a1e45c4392397b401fb.
+     See README.md and LICENSE.flexiv_description for source and modifications.
+     Kinematics only: no meshes, collision geometry or inertial parameters.
+     Offline IK uses upstream soft joint limits; live limits come from RobotInfo. -->
+<robot name="rizon4r">
+  <joint name="joint1" type="revolute">
+    <parent link="base_link" />
+    <child link="link1" />
+    <origin xyz="0.0 0.0 0.155" rpy="3.141592653589793 0.0 3.141592653589793" />
+    <axis xyz="0 0 1" />
+    <limit lower="-2.7925" upper="2.7925" effort="123" velocity="2.0944" />
+  </joint>
+  <joint name="joint2" type="revolute">
+    <parent link="link1" />
+    <child link="link2" />
+    <origin xyz="0.0 0.03 -0.21" rpy="0.0 0.0 3.141592653589793" />
+    <axis xyz="0 1 0" />
+    <limit lower="-2.2689" upper="2.2689" effort="123" velocity="2.0944" />
+  </joint>
+  <joint name="joint3" type="revolute">
+    <parent link="link2" />
+    <child link="link3" />
+    <origin xyz="0.0 -0.035 -0.205" rpy="0.0 0.0 3.141592653589793" />
+    <axis xyz="0 0 1" />
+    <limit lower="-2.9671" upper="2.9671" effort="64" velocity="2.4435" />
+  </joint>
+  <joint name="joint4" type="revolute">
+    <parent link="link3" />
+    <child link="link4" />
+    <origin xyz="-0.02 -0.03 -0.19" rpy="0.0 0.0 0.0" />
+    <axis xyz="0 1 0" />
+    <limit lower="-1.8675" upper="2.6878" effort="64" velocity="2.4435" />
+  </joint>
+  <joint name="joint5" type="revolute">
+    <parent link="link4" />
+    <child link="link5" />
+    <origin xyz="0.02 -0.025 -0.195" rpy="0.0 0.0 0.0" />
+    <axis xyz="0 0 1" />
+    <limit lower="-2.9671" upper="2.9671" effort="39" velocity="4.8869" />
+  </joint>
+  <joint name="joint6" type="revolute">
+    <parent link="link5" />
+    <child link="link6" />
+    <origin xyz="0.0 0.03 -0.19" rpy="0.0 0.0 3.141592653589793" />
+    <axis xyz="0 1 0" />
+    <limit lower="-1.3963" upper="4.5379" effort="39" velocity="4.8869" />
+  </joint>
+  <joint name="joint7" type="revolute">
+    <parent link="link6" />
+    <child link="link7" />
+    <origin xyz="0.015 -0.073 -0.11" rpy="0.0 -1.5707963267948966 0.0" />
+    <axis xyz="0 0 1" />
+    <limit lower="-2.9671" upper="2.9671" effort="39" velocity="4.8869" />
+  </joint>
+  <joint name="link7_to_flange" type="fixed">
+    <parent link="link7" />
+    <child link="flange" />
+    <origin xyz="0.0 0.0 -0.081" rpy="3.141592653589793 0.0 0.0" />
+  </joint>
+  <link name="base_link" />
+  <link name="link1" />
+  <link name="link2" />
+  <link name="link3" />
+  <link name="link4" />
+  <link name="link5" />
+  <link name="link6" />
+  <link name="link7" />
+  <link name="flange" />
+</robot>

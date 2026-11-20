@@ -1,21 +1,21 @@
 <img src="docs/BestMan_logo.png" alt="BestMan Logo" width="700"/>
 
-# BestMan Flexiv — Rizon 4 / RDK 1.9.3
+# BestMan Flexiv — Rizon 4 / 4R · RDK 1.9.3
 
-A Python interface for non-real-time control of **Rizon 4 (7 joints, no external axes)**.
+A Python interface for non-real-time control of **Rizon 4 and Rizon 4R (7 joints, no external axes)**.
 It supports joint and Cartesian motion, hybrid motion-force control, active and passive
 force control, Cartesian and joint impedance, external wrench readings, sensor zeroing,
 tool configuration, and serial Robotiq grippers.
 
 ## SDK version
 
-This project pins **`flexivrdk==1.9.3`** for **Rizon 4 with controller software
+This project pins **`flexivrdk==1.9.3`** for **Rizon 4/4R with controller software
 v3.11.2**. Package installation, setup scripts and runtime checks all enforce this
 version. An existing 1.9.4.1 installation is replaced by 1.9.3 when installing this
 project; no version flag or dependency-file edit is needed.
 
 The native SDK still checks the controller pairing during connection. RDK 2.x
-supports Enlight and is not compatible with this Rizon 4 profile. In 1.9.3, waypoint
+supports Enlight and is not compatible with this Rizon 4/4R profile. In 1.9.3, waypoint
 batches use controller-selected timing: omit `durations` or pass only zeros.
 Nonzero per-waypoint durations are rejected before any command is sent.
 
@@ -56,7 +56,7 @@ python -m pip install -e .
 After `source .venv/bin/activate`, use `python Examples/display_states.py ...` or
 `python -m Examples.display_states ...`. The installed package and its URDF resources
 work from any working directory; neither source edits nor `sys.path`/`PYTHONPATH`
-changes are needed. Replace `Rizon4-123456` with the actual robot serial number.
+changes are needed. Replace `Rizon4-123456` or `Rizon4R-123456` with the actual robot serial number.
 
 ROS, `roscore`, and manual SDK path configuration are not required. If you previously
 used the old installation scripts, remove any `PYTHONPATH` entries pointing to
@@ -70,6 +70,23 @@ Connect using the robot's **serial number**, shown on the robot or controller,
 instead of the old `robot_ip, local_ip` arguments. Optional network interface
 restrictions use the local NIC's IPv4 address. Construction connects and reads
 information; it does not enable or move the robot.
+
+The serial prefix automatically selects the `Rizon4` or `Rizon4R` defaults and
+matching offline kinematic model. The controller's reported model, serial number,
+seven-joint count and absence of external axes are checked before control commands.
+An explicitly configured model must match the serial; a JSON config without `model`
+inherits it from the serial. `RobotConfig()` still defaults to Rizon4; use
+`RobotConfig(model="Rizon4R")` for an explicit 4R configuration.
+
+```python
+from Robotics_API import Bestman_Real_Flexiv
+
+right = Bestman_Real_Flexiv("Rizon4R-123456")  # Same motion, force, servo and tool APIs.
+```
+
+Both variants send and return native wxyz values unchanged. Rizon4R uses its own
+mirrored URDF for offline FK/IK; commands, joint signs and target frames are not
+automatically mirrored. See [model sources and scope](Asset/README.md).
 
 ```python
 from Robotics_API import Bestman_Real_Flexiv
@@ -119,13 +136,13 @@ python -m Examples.sdk_status Rizon4-123456
 
 The Python RDK 1.9.3 wheel exposes NRT `Send*` calls, **not** RT `Stream*` calls or
 RT modes. This is version-specific: **Python RDK 2.1.0 does export RT calls**, but it
-supports Enlight, not this Rizon 4 profile. See the [actual binary probe results](docs/PYTHON_RT_PROBE.md).
+supports Enlight, not this Rizon 4/4R profile. See the [actual binary probe results](docs/PYTHON_RT_PROBE.md).
 For Rizon 4 on 1.9.3, RT execution requires a compatible C++ backend, which can
 also be exposed to Python. `Enable()` is the Rizon motor-enable API; this version
 has no Python `ServoOn()`/`Disable()` robot API, and `Brake()` is restricted to medical models.
 
 The [SDK coverage guide](docs/PYTHON_SDK_COVERAGE.md) accounts for all 53 Python Robot
-members: 49 covered, four excluded for the Rizon 4/NRT profile. It also documents
+members: 49 covered, four excluded for the Rizon 4/4R NRT profile. It also documents
 onboard waypoint batches, plan pause/resume and breakpoints, asynchronous primitives,
 joint inertia shaping, digital IO, global variables, tool/work-coordinate management,
 and access to the eight native SDK service interfaces.
@@ -134,7 +151,7 @@ and access to the eight native SDK service interfaces.
 
 Configure the actual tool mass, centre of mass, inertia, and TCP before zeroing sensors
 with the robot stationary and free of environmental contact. The `flange_to_tcp` field
-in `config/rizon4.json` is used only for offline FK/IK and does not overwrite the
+in `config/rizon4.json` or `config/rizon4r.json` is used only for offline FK/IK and does not overwrite the
 controller's tool configuration. Use `configure_tool()` to set controller tool parameters
 from actual measurements.
 
@@ -189,7 +206,7 @@ paths are relative to the current directory, or may be absolute.
 | [move_arm_to_joint_values.py](Examples/move_arm_to_joint_values.py) | Send a joint target and wait for arrival. |
 | [move_arm_follow_joint_values.py](Examples/move_arm_follow_joint_values.py) | Read and execute joint waypoints from JSON. |
 | [move_eef_to_pose.py](Examples/move_eef_to_pose.py) | Send a WORLD wxyz TCP target and wait. |
-| [move_stay_with_me_init.py](Examples/move_stay_with_me_init.py) | Preview saved DJ INIT targets; move one/two Rizon 4 arms in an explicit TCP loop. |
+| [move_stay_with_me_init.py](Examples/move_stay_with_me_init.py) | Preview INIT joint angles and read diagnostics; move left Rizon 4 and/or right Rizon 4R in an explicit joint-position loop. |
 | [move_eef_follow_trajectory.py](Examples/move_eef_follow_trajectory.py) | Replay WORLD wxyz waypoints from JSON. |
 | [servo_joint_position.py](Examples/servo_joint_position.py) | Compute and send joint targets in an explicit timed loop. |
 | [servo_cartesian_motion_force.py](Examples/servo_cartesian_motion_force.py) | Stream NRT Cartesian targets with optional Z force. |
@@ -224,8 +241,10 @@ python -m Examples.teach_by_demonstration Rizon4-123456 --output taught_poses.js
 python -m Examples.move_eef_follow_trajectory Rizon4-123456 --trajectory taught_poses.json
 # Preview saved stay-with-me INIT targets without connecting
 python -m Examples.move_stay_with_me_init
-# Move the left Rizon 4, with its modified-tip Tool already selected and controller enabled
+# Move the left Rizon 4 to the saved joint posture, with the controller enabled
 python -m Examples.move_stay_with_me_init --arm Left --left-sn Rizon4-123456 --run
+# Move the Rizon 4 left arm, then the Rizon 4R right arm
+python -m Examples.move_stay_with_me_init --arm both --left-sn Rizon4-123456 --right-sn Rizon4R-654321 --run
 # Gripper position uses raw 0–255 commands, not millimetres
 python -m Examples.open_gripper_width Rizon4-123456 --port /dev/ttyUSB0 --position 100
 ```
@@ -250,21 +269,61 @@ loss, unexpected mode/primitive changes or failure to start the primitive. Statu
 reports `STARTING` until the requested primitive is confirmed running, then `ACTIVE`.
 `sdk_status` reads controller/plan/button state without enabling motion.
 
-The stay-with-me INIT example embeds the supplied 2026-11-20 target snapshot and
-needs no DJ-demo files or source-path configuration. It sends the seven values
-unchanged in each controller's native **WORLD** frame, used as that arm's base in
-the supplied setup. It does not apply a base transform or add a tool offset. These
-are setup-specific targets, not general home poses: the base convention and active
-modified-tip Tool must match the intended setup.
+The stay-with-me INIT example now uses **joint position control**. It embeds
+`DJ-Sim/configs/robot_models.json` → `home_degrees` (2026-11-20 snapshot), posture
+`inward45_down30_lower_link2_link3`. It needs no DJ-demo installation. The left
+Rizon4 target in native **J1–J7 degrees** is:
 
-`Left` and `Right` select target presets. The current library supports **Rizon4**
-hardware only; the source script's `Rizon4R` model is not supported. For two Rizon 4
-controllers, supply distinct `--left-sn` and `--right-sn` with `--arm both`. Both are
-checked before motion, then moved Left → Right. Default limits are 0.03 m/s,
-0.2 rad/s, 0.05 m/s² and 0.3 rad/s², with a 90-second timeout per arm. The TCP must
-remain within 1 mm and 0.5° with low measured velocity for 0.3 seconds before success
-is reported. `--enable` optionally enables a fault-free controller. Existing control
-tasks and tool changes are rejected; this direct move provides no obstacle planning.
+```text
+[23.83999377, 103.11853943, -63.32590474, 116.76360791,
+ 82.66197167, -22.29879423, 55.77233573]
+```
+
+Edit `ROBOTS["Left"]["init_joint_deg"]` in the example to change this target.
+The file converts degrees to radians and calls BestMan `servo_joint_position`
+in its own 30 Hz loop (`NRT_JOINT_POSITION`). This command does not use TCP poses,
+base/WORLD transforms, IK, or Tool offsets, and does not modify the active Tool.
+Joint posture reproduction does not guarantee the simulated TCP position with
+another tool length or robot geometry.
+
+```bash
+# Offline target preview; no robot connection
+python -m Examples.move_stay_with_me_init --arm Left
+# Read actual/target joints and limit margins, without enabling or moving
+python -m Examples.move_stay_with_me_init --arm Left --left-sn Rizon4-123456 --read-state
+# Move; use --enable only if the fault-free controller needs enabling
+python -m Examples.move_stay_with_me_init --arm Left --left-sn Rizon4-123456 --run
+```
+
+Defaults are **5 degrees/s**, **10 degrees/s²**, and a 90-second timeout. Override
+with `--max-joint-vel-deg-s`, `--max-joint-acc-deg-s2`, `--frequency`, and `--timeout`.
+Every joint must remain within 0.5 degrees of target and below 0.5 degrees/s for
+0.3 seconds before success. Target limits, speed limits, serial/model and IDLE
+state are checked before motion. Success, errors, timeout and Ctrl+C/SIGTERM stop
+the commanded motion; timeout also reports actual joints and limit margins.
+This is a direct joint move without an obstacle-checked transit path.
+
+The right preset belongs to **Rizon4R** and requires its actual `Rizon4R-...`
+serial. The wrapper accepts Rizon4 and Rizon4R, infers the default model from the
+serial, and checks the model and seven-axis layout reported by the controller.
+Joint limits are read from that controller. `--arm both` preflights both arms,
+then moves Left → stops Left → moves Right → stops Right.
+
+```bash
+# Replace the placeholder with the complete serial printed on the right robot
+python -m Examples.move_stay_with_me_init --arm Right --right-sn Rizon4R-YOUR_SERIAL --run
+python -m Examples.move_stay_with_me_init --arm both --left-sn Rizon4-123456 --right-sn Rizon4R-YOUR_SERIAL --run
+```
+
+The right native J1–J7 degree target is:
+`[23.84085496, 103.11843815, -63.32638954, 116.76360639, 82.66143190, -22.29907210, 55.77186850]`.
+A supplied config's explicit `model` must match the serial. For mixed-model
+`--arm both`, omit `--config` or omit `model` in a shared limits JSON so each
+arm selects its own model.
+The SDK version/connection handshake remains enforced. Rizon4R support here has
+been checked with offline command recorders; no right-arm hardware motion was run.
+Separate Rizon4 and Rizon4R URDFs are bundled for offline FK/IK. Native joint
+control in this example uses controller limits and does not require FK/IK.
 
 Force-control and impedance examples enforce limits on duration, TCP displacement,
 and measured force/moment. They do not perform contact search or automatic sensor
@@ -287,9 +346,9 @@ Isaac/PhysX control interfaces and lacks a Flexiv RDK network service and closed
 force-control implementation, so it cannot validate force tracking on the real controller.
 
 The Python interface provides NRT control only. Use the official C++ API for 1000 Hz
-real-time joint torque or Cartesian control. The offline Rizon 4 URDF is a kinematic
-resource with blurred dynamic parameters; it must not be used for torque control or
-gravity compensation.
+real-time joint torque or Cartesian control. The offline Rizon 4/4R URDFs are for
+kinematics only: the existing 4 model has blurred dynamics and the 4R model omits
+inertial parameters. Neither supplies calibrated torque control or gravity compensation.
 
 ## Contact and references
 

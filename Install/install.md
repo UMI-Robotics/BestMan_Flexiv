@@ -1,4 +1,4 @@
-# Rizon 4 installation
+# Rizon 4/4R installation
 
 Use Python 3.12 (or 3.10) on Ubuntu 22.04+, Windows x86_64, or macOS 12+ arm64.
 The repository CI targets Python 3.10 and 3.12. Python 3.8 is unsupported.
@@ -62,7 +62,7 @@ the exact 1.9.3 dependency, even if a different SDK was previously installed.
 Conda alternative: `conda env create -f Install/basic_env_py312.yaml`, then
 `conda activate bestman-flexiv` and `python -m pip install -e .`.
 The YAML already pins RDK 1.9.3; no path or version edits are required.
-A regular non-editable `python -m pip install .` also packages the examples and Rizon 4 URDF.
+A regular non-editable `python -m pip install .` also packages the examples and both Rizon 4/4R URDFs.
 
 ## Imports, resources and example entry points
 
@@ -80,8 +80,10 @@ it does not import another example. Every control script shows the connection,
 initialization, mode/configuration, commands and stop sequence in that file.
 The two servo examples contain their own timed loops and directly call `servo_*` APIs.
 
-The default Rizon 4 profile is built into the package. Offline FK/IK resolves the
-packaged URDF relative to the installed package, not the current working directory.
+Rizon 4/4R defaults are built into the package and selected from the serial prefix.
+Offline FK/IK resolves the matching packaged URDF relative to the installed package,
+not the current working directory. An explicit config model must match the serial;
+configs without `model` inherit it automatically.
 No config path or asset path needs editing. Optional `--config`, `--trajectory` and
 `--output` paths are supplied by the caller and resolve against the current directory.
 Teaching and replay use plain `[x,y,z,qw,qx,qy,qz]` lists throughout (metres, wxyz).
@@ -93,7 +95,7 @@ in the official [1.9.3 release](https://github.com/flexivrobotics/flexiv_rdk/rel
 The controller must have an RDK license and be reachable in Auto (Remote) mode.
 The SDK checks compatibility at connection time. Keep that check enabled and install
 the matching client; this fix does not require changing controller firmware.
-RDK 2.x targets Enlight and is not compatible with this Rizon 4 profile.
+RDK 2.x targets Enlight and is not compatible with this Rizon 4/4R profile.
 Waypoint timing is selected by the controller. Pass `durations=None` or all zeros;
 nonzero values are rejected before mode changes or commands.
 
@@ -103,7 +105,7 @@ To install only the SDK into the active environment:
 bash Install/load_flexivrdk.sh
 ```
 
-Use the actual robot serial number in place of `Rizon4-123456`. Optional `--interface`
+Use the actual `Rizon4-...` or `Rizon4R-...` robot serial number. Optional `--interface`
 is a local NIC IPv4 address, not the robot IP. Python NRT frequency is 1–100 Hz.
 
 ROS and manual SDK path setup are not required. For existing legacy installations,

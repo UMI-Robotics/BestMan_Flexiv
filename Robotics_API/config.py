@@ -1,10 +1,28 @@
-"""Validated Rizon 4 defaults. Controller limits/nominal gains remain authoritative."""
+"""Rizon 4/4R defaults. Controller limits/nominal gains remain authoritative."""
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from numbers import Integral
 from pathlib import Path
+
+MODEL_URDFS = {
+    "Rizon4": "flexiv_rizon4_kinematics.urdf",
+    "Rizon4R": "flexiv_rizon4r_kinematics.urdf",
+}
+
+
+def model_from_serial(robot_sn):
+    """Resolve a supported serial prefix, including the SDK's spaced model names."""
+    match = (
+        re.fullmatch(r"(Rizon4R|Rizon4)-[A-Za-z0-9_-]+", robot_sn.replace(" ", ""))
+        if isinstance(robot_sn, str)
+        else None
+    )
+    if match is None:
+        raise ValueError("Use a Rizon4-... or Rizon4R-... serial number, not robot/local IPs")
+    return match.group(1)
 
 
 def vector(values, size, name, *, lower=None, upper=None, strict=False, allow_inf=False):
@@ -61,8 +79,8 @@ class RobotConfig:
     flange_to_tcp: tuple = (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
 
     def __post_init__(self):
-        if self.model != "Rizon4":
-            raise ValueError("Only Rizon4 is configured")
+        if self.model not in MODEL_URDFS:
+            raise ValueError("Supported models are Rizon4 and Rizon4R")
         if not 1 <= positive(self.frequency, "frequency") <= 100:
             raise ValueError("frequency must be in [1, 100]")
         if positive(self.joint_velocity_scale, "joint_velocity_scale") > 1:
@@ -84,8 +102,10 @@ class RobotConfig:
         pose_vector(self.flange_to_tcp, "flange_to_tcp")
 
     @classmethod
-    def load(cls, path=None):
+    def load(cls, path=None, *, default_model="Rizon4"):
         if path is None:
-            return cls()
+            return cls(model=default_model)
         with Path(path).open(encoding="utf-8") as stream:
-            return cls(**json.load(stream))
+            values = json.load(stream)
+        values.setdefault("model", default_model)
+        return cls(**values)

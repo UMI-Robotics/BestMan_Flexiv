@@ -1,4 +1,4 @@
-# Rizon 4 SDK migration and force-control API
+# Rizon 4/4R SDK migration and force-control API
 
 Baseline: repository main commit `68e94e8`; target official RDK `v1.9.3`, commit
 `bbb7ffc1feb125f6078eb99d2048264ceaab65e8`. Sources checked on 2026-11-20:
@@ -11,6 +11,12 @@ Baseline: repository main commit `68e94e8`; target official RDK `v1.9.3`, commit
 
 The highest PyPI version is not the correct SDK for this robot. Dependencies and
 runtime checks pin 1.9.3, rather than using a range which could install 2.x.
+
+Version 0.3.2 supports both Rizon4 and Rizon4R serials. Defaults and offline URDFs
+follow the serial prefix; the connected model, serial and seven-joint shape must
+match. Shared JSON limits may omit `model`, while explicit model selections must
+match the connected arm. Force, servo, tool and state APIs retain native wxyz values
+and joint signs. See [kinematic model provenance](../Asset/README.md).
 
 ## Existing problems addressed
 
@@ -86,7 +92,8 @@ claim to restore all controller state after an exception.
 
 Tool `tcp_pose` and force-control `frame_transform` both use
 `[x,y,z,qw,qx,qy,qz]` with metres and a unit wxyz quaternion.
-No actual tool mass/CoM/inertia is assumed. `config/rizon4.json` defaults to an
+No actual tool mass/CoM/inertia is assumed. Both `config/rizon4.json` and
+`config/rizon4r.json` default to an
 identity offline TCP transform, and it does not overwrite the controller's active
 tool on connection. Use measured values, for example through:
 
@@ -103,7 +110,7 @@ arm.configure_tool(
 This API changes controller tool parameters and also updates this instance's offline
 FK/IK transform. `get_tool()` reads the active controller tool. Sensor zeroing must
 occur at rest without environment contact and after correct payload configuration.
-The supplied URDF contains blurred dynamics, so it is not a torque-control model.
+The offline URDFs do not supply calibrated dynamics and are not torque-control models.
 
 ## Python and historical scope
 

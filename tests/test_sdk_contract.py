@@ -100,7 +100,8 @@ def test_example_help_works_without_ros_gripper_or_robot(name, entry, tmp_path):
     assert "usage:" in result.stdout
 
 
-def test_installed_urdf_loads_outside_checkout(tmp_path):
+@pytest.mark.parametrize("model", ["Rizon4", "Rizon4R"])
+def test_installed_urdf_loads_outside_checkout(tmp_path, model):
     result = subprocess.run(
         [
             sys.executable,
@@ -108,17 +109,19 @@ def test_installed_urdf_loads_outside_checkout(tmp_path):
             "-c",
             """
 import numpy as np
+import sys
 from Robotics_API import Bestman_Real_Flexiv
 from Robotics_API.config import RobotConfig
 
 # Exercise the installed resource resolver without constructing an SDK Robot.
 arm = Bestman_Real_Flexiv.__new__(Bestman_Real_Flexiv)
-arm.config = RobotConfig.load()
+arm.config = RobotConfig(model=sys.argv[1])
 arm._robot_chain = None
 transform = arm.robot_chain.forward_kinematics([0.0] * 9)
 assert transform.shape == (4, 4) and np.isfinite(transform).all()
-assert arm.config.model == "Rizon4"
+assert arm.config.model == sys.argv[1]
 """,
+            model,
         ],
         cwd=tmp_path,
         text=True,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Pin the Rizon 4 client to controller software 3.11.2.
+# Pin the Rizon 4/4R client to controller software 3.11.2.
 rdk_version="1.9.3"
 if [[ $# -gt 0 ]]; then
     case "$1" in

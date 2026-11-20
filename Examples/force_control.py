@@ -11,10 +11,12 @@ from Robotics_API import Bestman_Real_Flexiv
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("robot_sn", help="Rizon 4 serial number, e.g. Rizon4-123456")
+    p.add_argument("robot_sn", help="Rizon4/Rizon4R serial, e.g. Rizon4R-123456")
     p.add_argument("--frequency", type=float, default=None, help="NRT Hz, 1-100; default: 20")
     p.add_argument("--interface", action="append", default=[], help="Local NIC IPv4 whitelist; repeatable")
-    p.add_argument("--config", help="Optional JSON configuration; built-in Rizon 4 defaults otherwise")
+    p.add_argument(
+        "--config", help="Optional JSON configuration; model defaults inferred from the serial otherwise"
+    )
     p.add_argument("--duration", type=float, default=5.0, help="Control duration in seconds")
     p.add_argument("--max-displacement", type=float, default=0.03, help="Measured TCP travel limit (m)")
     p.add_argument("--abort-force", type=float, default=12.0, help="Measured force norm limit (N)")

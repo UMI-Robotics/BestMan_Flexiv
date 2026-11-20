@@ -1,8 +1,9 @@
-"""Check the standalone INIT example through real BestMan APIs and offline SDK recorders."""
+"""Exercise actual BestMan joint APIs with a command recorder, never hardware."""
 
 import fcntl
 import hashlib
 import json
+import math
 import signal
 from types import SimpleNamespace
 
@@ -11,216 +12,236 @@ import pytest
 from Examples import move_stay_with_me_init as example
 from Robotics_API import Bestman_Real_Flexiv
 
-SERIALS = {"Left": "Rizon4-OFFLINE_L", "Right": "Rizon4-OFFLINE_R"}
+SERIAL = "Rizon4-OFFLINE_L"
 
 
 @pytest.fixture
 def setup(backend, monkeypatch, tmp_path):
-    state = SimpleNamespace(now=0.0, created=[], sends=[], order=[], follow=True, lag=0.0, on_send=None)
-    state.controllers, state.arms, state.tools = {}, {}, {}
-    for side, serial in SERIALS.items():
-        controller = type(backend)()
-        controller.information.serial_num = serial
-        arm = Bestman_Real_Flexiv(serial, robot=controller)
-        tool = SimpleNamespace(
-            name="ModifiedTip",
-            tcp_location=[0.01, 0.02, 0.19, 1, 0, 0, 0],
-            mass=0.7,
-            CoM=[0, 0, 0.06],
-            inertia=[0.001] * 6,
-        )
-        state.controllers[side], state.arms[side], state.tools[side] = controller, arm, tool
-        monkeypatch.setattr(arm, "get_tool", lambda tool=tool: (tool.name, tool))
-        send, stop, enable = controller.SendCartesianMotionForce, controller.Stop, controller.Enable
+    backend.information.serial_num = SERIAL
+    backend.information.q_min = list(map(math.radians, [-160, -130, -170, -107, -170, -80, -170]))
+    backend.information.q_max = list(map(math.radians, [160, 130, 170, 154, 170, 260, 170]))
+    arm = Bestman_Real_Flexiv(SERIAL, robot=backend)
+    state = SimpleNamespace(
+        now=0.0,
+        created=[],
+        sends=[],
+        follow=True,
+        lag=0.0,
+        on_send=None,
+        arm=arm,
+        controller=backend,
+        tmp_path=tmp_path,
+    )
+    send, enable = backend.SendJointPosition, backend.Enable
 
-        def dispatch(*args, side=side, controller=controller, send=send):
-            send(*args)
-            state.sends.append((side, list(args[0]), state.now, args[1:]))
-            state.order.append((side, "send"))
-            if state.follow:
-                controller.state.tcp_pose = list(args[0])
-            state.now += state.lag
-            if state.on_send:
-                state.on_send(side, controller)
+    def dispatch(*args):
+        send(*args)
+        state.sends.append((state.now, args))
+        if state.follow:
+            backend.state.q = list(args[0])
+        state.now += state.lag
+        if state.on_send:
+            state.on_send(backend)
 
-        def stop_robot(side=side, stop=stop):
-            state.order.append((side, "stop"))
-            stop()
-
-        def enable_robot(controller=controller, enable=enable):
-            enable()
-            controller.is_ready = True
-
-        monkeypatch.setattr(controller, "SendCartesianMotionForce", dispatch)
-        monkeypatch.setattr(controller, "Stop", stop_robot)
-        monkeypatch.setattr(controller, "Enable", enable_robot)
+    def enable_robot():
+        enable()
+        backend.is_ready = True
 
     def factory(serial, frequency=None, **kwargs):
         state.created.append(serial)
-        return state.arms[next(side for side in SERIALS if SERIALS[side] == serial)]
+        return arm
 
-    def sleep(seconds):
-        state.now += seconds
-
+    monkeypatch.setattr(backend, "SendJointPosition", dispatch)
+    monkeypatch.setattr(backend, "Enable", enable_robot)
     monkeypatch.setattr(example, "Bestman_Real_Flexiv", factory)
     monkeypatch.setattr(example.time, "monotonic", lambda: state.now)
-    monkeypatch.setattr(example.time, "sleep", sleep)
+    monkeypatch.setattr(example.time, "sleep", lambda dt: setattr(state, "now", state.now + dt))
     monkeypatch.setattr(example.tempfile, "gettempdir", lambda: str(tmp_path))
-    state.tmp_path = tmp_path
     return state
 
 
-def run(*extra):
-    return example.main(["--left-sn", SERIALS["Left"], "--right-sn", SERIALS["Right"], *extra])
+def run(*args):
+    return example.main(["--left-sn", SERIAL, *args])
 
 
-def test_preview_never_connects_and_preserves_wxyz_targets(setup, capsys):
+def test_preview_uses_source_joint_degrees_without_connection(setup, capsys):
     assert run() == 0
-    assert setup.created == []
     report = json.loads(capsys.readouterr().out)
-    assert report["quaternion_order"] == "wxyz"
-    assert report["frame"] == "WORLD"
-    assert report["targets"] == {side: example.ROBOTS[side]["init_tcp"] for side in SERIALS}
+    assert setup.created == []
+    assert report["control_space"] == "joint"
+    assert report["joint_order"] == "J1..J7"
+    assert report["targets_deg"]["Left"] == pytest.approx(
+        [
+            23.839993772894275,
+            103.11853942611782,
+            -63.325904744874336,
+            116.76360790640103,
+            82.66197167425484,
+            -22.298794228275693,
+            55.77233573427813,
+        ]
+    )
+    assert report["targets_rad"]["Left"] == pytest.approx(
+        [math.radians(v) for v in report["targets_deg"]["Left"]]
+    )
+    assert report["max_joint_vel_deg_s"] == 5.0
+    assert report["max_joint_acc_deg_s2"] == 10.0
 
 
-def test_both_arms_send_exact_tcp_targets_sequentially_through_bestman(setup, capsys):
-    assert run("--run") == 0
-    assert setup.created == list(SERIALS.values())
-    for side in SERIALS:
-        sent = [event for event in setup.sends if event[0] == side]
-        assert len(sent) >= 10
-        assert all(event[1] == example.ROBOTS[side]["init_tcp"] for event in sent)
-        assert all(event[3] == ([0.0] * 6, [0.0] * 6, 0.03, 0.2, 0.05, 0.3) for event in sent)
-        assert setup.controllers[side].events[-1] == ("Stop",)
-    first_right = setup.order.index(("Right", "send"))
-    assert all(side == "Right" for side, action in setup.order[first_right:])
-    assert setup.order[first_right - 2] == ("Left", "stop")
-    assert capsys.readouterr().out.count('"status": "INIT_REACHED"') == 2
+def test_only_joint_commands_with_radian_speed_limits_and_stop(setup, capsys):
+    assert run("--run", "--max-joint-vel-deg-s", "3", "--max-joint-acc-deg-s2", "6") == 0
+    assert setup.created == [SERIAL]
+    assert len(setup.sends) >= 10
+    for _, (q, dq, vmax, amax) in setup.sends:
+        assert q == pytest.approx(example.joint_target("Left"))
+        assert dq == [0.0] * 7
+        assert vmax == pytest.approx([math.radians(3)] * 7)
+        assert amax == pytest.approx([math.radians(6)] * 7)
+    events = setup.controller.events
+    assert {e[0] for e in events} == {"SwitchMode", "SendJointPosition", "Stop"}
+    assert [e[1] for e in events if e[0] == "SwitchMode"] == [setup.arm.mode.NRT_JOINT_POSITION]
+    assert events[-1] == ("Stop",)
+    assert '"status": "INIT_REACHED"' in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
     "args",
     [
         ("--frequency", "nan"),
-        ("--max-linear-vel", "-1"),
+        ("--frequency", "101"),
         ("--timeout", "inf"),
+        ("--max-joint-vel-deg-s", "0"),
+        ("--max-joint-acc-deg-s2", "nan"),
         ("--left-sn", "Rizon4R-123456"),
-        ("--right-sn", SERIALS["Left"]),
+        ("--left-sn", "Rizon4-"),
+        ("--arm", "Right", "--right-sn", "Rizon4-OFFLINE_R"),
+        ("--arm", "both", "--right-sn", "Rizon4-OFFLINE_R"),
     ],
 )
-def test_invalid_settings_or_models_fail_before_connecting(setup, args):
+def test_invalid_or_incompatible_targets_fail_before_connection(setup, args):
     assert run("--run", *args) == 2
     assert setup.created == []
+    assert setup.controller.events == []
 
 
-def test_both_preflight_before_any_commands(setup):
-    setup.tools["Right"].name = "Flange"
-    assert run("--run") == 2
-    assert setup.sends == []
-    assert all(controller.events == [] for controller in setup.controllers.values())
-
-
-def test_active_controller_is_not_interrupted(setup):
-    controller = setup.controllers["Left"]
-    controller.current_mode = setup.arms["Left"].mode.NRT_PLAN_EXECUTION
-    controller.plan_busy = True
-    assert run("--arm", "Left", "--run") == 2
+@pytest.mark.parametrize("failure", ["target_limit", "speed_limit", "model", "serial", "busy"])
+def test_preflight_rejects_bad_controller_before_mutation(setup, failure):
+    controller = setup.controller
+    if failure == "target_limit":
+        controller.information.q_max[3] = 2.0
+    elif failure == "speed_limit":
+        controller.information.dq_max[0] = math.radians(1)
+    elif failure == "model":
+        controller.information.model_name = "Rizon4R"
+    elif failure == "serial":
+        setup.arm.get_arm_id = lambda: "Rizon4-OTHER"
+    else:
+        controller.current_mode = setup.arm.mode.NRT_PLAN_EXECUTION
+        controller.plan_busy = True
+    assert run("--run", "--enable") == 2
     assert controller.events == []
 
 
-def test_enable_is_explicit_and_does_not_clear_existing_faults(setup):
-    controller = setup.controllers["Left"]
+def test_enable_is_explicit_without_clearing_existing_fault(setup):
+    controller = setup.controller
     controller.is_ready = False
-    assert run("--arm", "Left", "--run") == 2
+    assert run("--run") == 2
     assert controller.events == []
     controller.has_fault = True
-    assert run("--arm", "Left", "--run", "--enable") == 2
+    assert run("--run", "--enable") == 2
     assert controller.events == []
     controller.has_fault = False
-    assert run("--arm", "Left", "--run", "--enable") == 0
+    assert run("--run", "--enable") == 0
     assert ("Enable",) in controller.events
-    assert not any(event[0] == "ClearFault" for event in controller.events)
+    assert not any(e[0] == "ClearFault" for e in controller.events)
 
 
-@pytest.mark.parametrize("failure", ["unreached", "moving", "disconnect", "mode", "tool"])
-def test_motion_failures_stop_without_reporting_success(setup, capsys, failure):
+@pytest.mark.parametrize(
+    "failure", ["unreached", "one_joint", "moving", "disconnect", "mode", "fault", "send"]
+)
+def test_failed_motion_stops_without_false_success(setup, capsys, failure):
     if failure == "unreached":
         setup.follow = False
+    elif failure == "one_joint":
+        setup.on_send = lambda c: c.state.q.__setitem__(6, c.state.q[6] + math.radians(1.0))
     elif failure == "moving":
-        setup.controllers["Left"].state.tcp_vel = [0.01, 0, 0, 0, 0, 0]
+        setup.controller.state.dq[6] = math.radians(1.0)
     elif failure == "disconnect":
-        setup.on_send = lambda side, controller: setattr(controller, "connected", lambda: False)
+        setup.on_send = lambda c: setattr(c, "connected", lambda: False)
     elif failure == "mode":
-        setup.on_send = lambda side, controller: setattr(
-            controller, "current_mode", setup.arms[side].mode.IDLE
-        )
+        setup.on_send = lambda c: setattr(c, "current_mode", setup.arm.mode.IDLE)
+    elif failure == "fault":
+        setup.on_send = lambda c: setattr(c, "has_fault", True)
     else:
-        setup.on_send = lambda side, controller: setattr(setup.tools[side], "name", "ChangedTool")
-    assert run("--arm", "Left", "--run", "--timeout", "0.8") == 2
-    assert setup.controllers["Left"].events[-1] == ("Stop",)
+
+        def fail(c):
+            raise RuntimeError("injected send failure")
+
+        setup.on_send = fail
+    assert run("--run", "--timeout", "0.8") == 2
+    assert setup.controller.events[-1] == ("Stop",)
     assert "INIT_REACHED" not in capsys.readouterr().out
 
 
-def test_blocking_tool_read_cannot_dispatch_after_timeout(setup, monkeypatch):
-    arm = setup.arms["Left"]
-    read_tool = arm.get_tool
+def test_blocking_status_read_cannot_send_after_deadline(setup, monkeypatch):
+    original = setup.arm.get_status
     calls = 0
 
-    def delayed_read():
+    def read():
         nonlocal calls
         calls += 1
-        if calls == 3:  # First loop's tool check, after main/helper preflight.
+        if calls == 4:  # main preflight, main enable check, helper preflight, loop
             setup.now += 2.0
-        return read_tool()
+        return original()
 
-    monkeypatch.setattr(arm, "get_tool", delayed_read)
-    assert run("--arm", "Left", "--run", "--timeout", "1") == 2
+    monkeypatch.setattr(setup.arm, "get_status", read)
+    assert run("--run", "--timeout", "1") == 2
     assert setup.sends == []
-    assert setup.controllers["Left"].events[-1] == ("Stop",)
+    assert setup.controller.events[-1] == ("Stop",)
 
 
-def test_stop_failure_cannot_report_init_reached(setup, monkeypatch, capsys):
-    controller = setup.controllers["Left"]
-    stop = controller.Stop
+def test_stop_failure_cannot_report_success(setup, monkeypatch, capsys):
+    stop = setup.controller.Stop
 
-    def failing_stop():
-        was_moving = controller.current_mode == setup.arms["Left"].mode.NRT_CARTESIAN_MOTION_FORCE
+    def fail():
+        moving = setup.controller.current_mode == setup.arm.mode.NRT_JOINT_POSITION
         stop()
-        if was_moving:
+        if moving:
             raise RuntimeError("Stop failed")
 
-    monkeypatch.setattr(controller, "Stop", failing_stop)
-    assert run("--arm", "Left", "--run") == 2
+    monkeypatch.setattr(setup.controller, "Stop", fail)
+    assert run("--run") == 2
     output = capsys.readouterr()
     assert "INIT_REACHED" not in output.out
     assert "Stop failed" in output.err
 
 
-def test_sigterm_stops_and_restores_original_handler(setup):
+@pytest.mark.parametrize("kind", ["sigterm", "keyboard"])
+def test_interruption_stops_and_restores_signal(setup, kind):
     previous = signal.getsignal(signal.SIGTERM)
-    setup.on_send = lambda side, controller: signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
-    assert run("--arm", "Left", "--run") == 130
-    assert setup.controllers["Left"].events[-1] == ("Stop",)
+
+    def interrupt(c):
+        if kind == "sigterm":
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+        else:
+            raise KeyboardInterrupt
+
+    setup.on_send = interrupt
+    assert run("--run") == 130
+    assert setup.controller.events[-1] == ("Stop",)
     assert signal.getsignal(signal.SIGTERM) == previous
 
 
-def test_slow_commands_skip_missed_ticks_without_bursts(setup):
+def test_slow_loop_skips_missed_ticks(setup):
     setup.lag = 0.08
-    assert run("--arm", "Left", "--run") == 0
-    times = [event[2] for event in setup.sends]
+    assert run("--run") == 0
+    times = [t for t, _ in setup.sends]
     assert all(b - a >= 0.08 for a, b in zip(times, times[1:]))
 
 
-def test_local_serial_lock_is_respected_before_connection(setup):
-    key = hashlib.sha256(SERIALS["Left"].encode()).hexdigest()[:24]
+def test_serial_lock_prevents_connection(setup):
+    key = hashlib.sha256(SERIAL.encode()).hexdigest()[:24]
     with (setup.tmp_path / ("dj-real-" + key + ".lock")).open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        assert run("--arm", "Left", "--run") == 2
+        assert run("--run") == 2
     assert setup.created == []
-
-
-def test_arrival_accepts_equivalent_quaternion_sign():
-    target = example.ROBOTS["Left"]["init_tcp"]
-    distance, angle = example.pose_error(target[:3] + [-x for x in target[3:]], target)
-    assert distance == 0
-    assert angle < 1e-7

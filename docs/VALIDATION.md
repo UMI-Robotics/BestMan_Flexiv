@@ -1,5 +1,47 @@
 # Validation
 
+## 0.3.2 — Rizon 4R support
+
+Rizon4 and Rizon4R serial prefixes now select matching defaults. The connected
+model, serial number, seven-joint count and absence of external axes are verified
+before commands. Explicit config models must match; a JSON config without `model`
+inherits it from the serial. The SDK remains pinned to **1.9.3** for controller
+3.11.2, with the native SDK compatibility handshake preserved.
+
+The separate Rizon4R kinematic URDF derives from Flexiv's official
+`flexiv_description` commit `2fc4f62329fa95e0280b7a1e45c4392397b401fb`. Joint origins,
+axes and flange transform are retained; offline IK uses the upstream soft limits.
+Meshes and inertial parameters are omitted. Sources, modifications and license are
+documented in [Asset/README.md](../Asset/README.md). Both URDFs ship in the wheel.
+
+The current INIT example retains the DJ workstation's joint-position revision
+and read-only diagnostics. It embeds separate native J1–J7 degree targets for
+left Rizon4 and right Rizon4R, converts them to radians, and sends them through
+`servo_joint_position`. Its 30 Hz loop and API calls remain in this independent
+file. Defaults are 5 degrees/s and 10 degrees/s². Both controllers are checked
+before sequential Left → Stop → Right → Stop motion. `--read-state` reports
+joint errors and limit margins without motion, mode changes, enabling or stopping.
+Timeout diagnostics are read after stopping. No TCP conversion or IK is used
+by this example, and its joint targets are unchanged from the workstation copy.
+
+- macOS arm64 / Python 3.12.13 / RDK 1.9.3: **288 tests passed**.
+- Independent matrix composition from the upstream numerical tables matches 4R FK
+  at six nonzero joint configurations with a rotated/translated tool; IK returns
+  the same poses from perturbed seeds. 4 and 4R are checked to have different FK.
+- Tests cover model/config/serial mismatches, spaced serials, native handshake,
+  seven-joint/no-external-axis checks, live-limit use, unchanged joint/wxyz/wrench
+  signs, force-frame transforms, impedance and a Rizon4 → Rizon4R INIT sequence.
+  Joint INIT tests cover all-joint settling, command failures, interruption, limits,
+  active-controller refusal, timeout diagnostics and read-only state inspection.
+- Installed 4R URDF loading and all example module/direct/copied-file help entry
+  points pass outside the checkout. No source-path or ROS dependency is added.
+- Ruff and `git diff --check`: passed. The existing IKPy fixed-link-mask warning
+  appears in the additional kinematics cases too.
+
+Validation uses the real SDK binary with offline command recorders and kinematics.
+No Rizon4R hardware connection, motion, force tracking or collision validation was
+performed. This does not certify the setup-specific INIT targets for a physical cell.
+
 ## 2026-11-20 — standalone stay-with-me INIT example
 
 Added `Examples/move_stay_with_me_init.py` from the supplied standalone script.
@@ -7,11 +49,12 @@ Both seven-value target vectors match the source exactly and remain wxyz through
 dispatch, feedback and JSON output. The example imports the installed BestMan package;
 it does not search for a checkout, modify `sys.path`, or read DJ-demo files.
 
-The current library accepts Rizon4 hardware only. The source script's Rizon4R
-configuration was incompatible and is not advertised as supported. Left/Right now
-select the saved target presets; either connection must have a real Rizon4 serial.
-These saved targets still require the corresponding physical WORLD/base convention
-and modified-tip Tool. No transform or TCP offset is added by the example.
+At this initial addition, the library accepted Rizon4 hardware only and rejected
+the source script's Rizon4R configuration. This historical TCP example required
+the corresponding physical WORLD/base convention and modified-tip Tool.
+Version 0.3.2 above supports the intended Rizon4 / Rizon4R pairing and incorporates
+the workstation's subsequent joint-position INIT example, superseding these TCP
+targets. The following results describe the initial TCP implementation only.
 
 - macOS / Python 3.12.13 / RDK 1.9.3: **232 tests passed**, including 21 targeted
   INIT checks and all 21 examples' module/direct/copied-file help entry points.

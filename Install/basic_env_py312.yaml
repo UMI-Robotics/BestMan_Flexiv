@@ -1,4 +1,4 @@
-# Rizon 4 / controller 3.11.2 profile.
+# Rizon 4/4R / controller 3.11.2 profile.
 name: bestman-flexiv
 channels:
   - conda-forge

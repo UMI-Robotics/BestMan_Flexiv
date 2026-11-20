@@ -1,4 +1,4 @@
-name: Rizon 4 SDK contract and regression tests
+name: Rizon 4 and 4R SDK contract and regression tests
 on: [push, pull_request]
 jobs:
   test:
