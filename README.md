@@ -174,7 +174,8 @@ in their files, without a dispatcher, shared lifecycle helper or callback runner
 After installation and environment activation, the module commands below work from
 any directory. Alternatively, run a file directly, e.g.
 `python Examples/force_control.py Rizon4-123456` from the checkout. Replace the example
-serial number with your robot's actual serial number. The default frequency is 20 Hz; use
+serial number with your robot's actual serial number. The default frequency is 20 Hz
+(30 Hz for the stay-with-me INIT preset); use
 `--frequency` to select 1–100 Hz. All robot examples support
 an optional `--config` file and repeatable `--interface 192.168.2.108` arguments.
 Built-in defaults need no configuration file. User-supplied config/trajectory/output
@@ -188,6 +189,7 @@ paths are relative to the current directory, or may be absolute.
 | [move_arm_to_joint_values.py](Examples/move_arm_to_joint_values.py) | Send a joint target and wait for arrival. |
 | [move_arm_follow_joint_values.py](Examples/move_arm_follow_joint_values.py) | Read and execute joint waypoints from JSON. |
 | [move_eef_to_pose.py](Examples/move_eef_to_pose.py) | Send a WORLD wxyz TCP target and wait. |
+| [move_stay_with_me_init.py](Examples/move_stay_with_me_init.py) | Preview saved DJ INIT targets; move one/two Rizon 4 arms in an explicit TCP loop. |
 | [move_eef_follow_trajectory.py](Examples/move_eef_follow_trajectory.py) | Replay WORLD wxyz waypoints from JSON. |
 | [servo_joint_position.py](Examples/servo_joint_position.py) | Compute and send joint targets in an explicit timed loop. |
 | [servo_cartesian_motion_force.py](Examples/servo_cartesian_motion_force.py) | Stream NRT Cartesian targets with optional Z force. |
@@ -220,6 +222,10 @@ python -m Examples.joint_impedance Rizon4-123456 --stiffness-scale 0.3
 # Record [x,y,z,qw,qx,qy,qz] directly; replay uses the same wxyz order
 python -m Examples.teach_by_demonstration Rizon4-123456 --output taught_poses.json
 python -m Examples.move_eef_follow_trajectory Rizon4-123456 --trajectory taught_poses.json
+# Preview saved stay-with-me INIT targets without connecting
+python -m Examples.move_stay_with_me_init
+# Move the left Rizon 4, with its modified-tip Tool already selected and controller enabled
+python -m Examples.move_stay_with_me_init --arm Left --left-sn Rizon4-123456 --run
 # Gripper position uses raw 0–255 commands, not millimetres
 python -m Examples.open_gripper_width Rizon4-123456 --port /dev/ttyUSB0 --position 100
 ```
@@ -244,12 +250,28 @@ loss, unexpected mode/primitive changes or failure to start the primitive. Statu
 reports `STARTING` until the requested primitive is confirmed running, then `ACTIVE`.
 `sdk_status` reads controller/plan/button state without enabling motion.
 
+The stay-with-me INIT example embeds the supplied 2026-11-20 target snapshot and
+needs no DJ-demo files or source-path configuration. It sends the seven values
+unchanged in each controller's native **WORLD** frame, used as that arm's base in
+the supplied setup. It does not apply a base transform or add a tool offset. These
+are setup-specific targets, not general home poses: the base convention and active
+modified-tip Tool must match the intended setup.
+
+`Left` and `Right` select target presets. The current library supports **Rizon4**
+hardware only; the source script's `Rizon4R` model is not supported. For two Rizon 4
+controllers, supply distinct `--left-sn` and `--right-sn` with `--arm both`. Both are
+checked before motion, then moved Left → Right. Default limits are 0.03 m/s,
+0.2 rad/s, 0.05 m/s² and 0.3 rad/s², with a 90-second timeout per arm. The TCP must
+remain within 1 mm and 0.5° with low measured velocity for 0.3 seconds before success
+is reported. `--enable` optionally enables a fault-free controller. Existing control
+tasks and tool changes are rejected; this direct move provides no obstacle planning.
+
 Force-control and impedance examples enforce limits on duration, TCP displacement,
 and measured force/moment. They do not perform contact search or automatic sensor
 zeroing; start from a checked working pose. All motion examples call `Stop()` on normal
-exit, exceptions, and Ctrl+C. Joint targets, Cartesian targets, and trajectories must
-be supplied explicitly through the CLI instead of using hardcoded paths from the
-original experimental setup. See `python -m Examples.<name> --help` for parameters.
+exit, exceptions, and Ctrl+C. General motion examples require explicit joint/TCP
+targets or trajectories; the named INIT preset instead previews its embedded targets
+and requires `--run` to move. See `python -m Examples.<name> --help` for parameters.
 
 `Demos/` and `TODO/` are retained as historical experiments that depend on old APIs
 and ROS; they are not maintained entry points for this version. See

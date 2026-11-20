@@ -1,5 +1,32 @@
 # Validation
 
+## 2026-11-20 — standalone stay-with-me INIT example
+
+Added `Examples/move_stay_with_me_init.py` from the supplied standalone script.
+Both seven-value target vectors match the source exactly and remain wxyz throughout
+dispatch, feedback and JSON output. The example imports the installed BestMan package;
+it does not search for a checkout, modify `sys.path`, or read DJ-demo files.
+
+The current library accepts Rizon4 hardware only. The source script's Rizon4R
+configuration was incompatible and is not advertised as supported. Left/Right now
+select the saved target presets; either connection must have a real Rizon4 serial.
+These saved targets still require the corresponding physical WORLD/base convention
+and modified-tip Tool. No transform or TCP offset is added by the example.
+
+- macOS / Python 3.12.13 / RDK 1.9.3: **232 tests passed**, including 21 targeted
+  INIT checks and all 21 examples' module/direct/copied-file help entry points.
+- Installed module and copied standalone file both preview the same targets from
+  outside the checkout with `python -I`, without `PYTHONPATH` or path edits.
+- Tests use the real BestMan wrapper with offline SDK command recorders. They check
+  exact targets/wrench/velocity/limits, both-arm checks before motion, Left → Right
+  ordering, explicit enabling, active-controller refusal, tools, timeout after a
+  blocking read, fault/disconnect/mode changes, settling, stop failure, SIGTERM,
+  local serial locks and skipping missed dispatch periods.
+- Ruff and `git diff --check`: passed. The existing IKPy warning remains.
+
+No robot connection or physical motion was used to validate this example. These
+checks do not establish target reachability, calibration or collision clearance.
+
 ## 2026-11-20 — pressed button still leaves the internal plan in Hold
 
 An initial read-only connection to a Rizon 4 using RDK 1.9.3 observed the enabling
