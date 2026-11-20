@@ -7,6 +7,10 @@ now pin `flexivrdk==1.9.3`. This pairing targets controller software **3.11.2**.
 The independent examples and plain wxyz input/output conventions are unchanged.
 
 - macOS arm64 / Python 3.12.13 / official RDK 1.9.3: **188 tests passed**.
+- `djdemo-desktop` Linux x86_64 / Python 3.10.22 / RDK 1.9.3: **268 tests passed**
+  (the 188 maintained checks plus 80 existing local example-entry-point checks).
+  The `dj-stuff` environment has BestMan 0.3.1 with the exact 1.9.3 SDK dependency;
+  isolated imports succeed without a checkout path or `PYTHONPATH`.
 - Ruff, shell syntax and `git diff --check`: passed.
 - The actual 1.9.3 binary still exports 53 public Robot members. Its
   `NrtCartesianCmd` has no duration field: batch construction uses seven arguments;
