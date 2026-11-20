@@ -1,29 +1,44 @@
 # Validation
 
-## 2026-11-20 — teaching activation and read-only controller diagnosis
+## 2026-11-20 — pressed button still leaves the internal plan in Hold
 
-A read-only connection to a Rizon 4 using RDK 1.9.3 sampled controller status eight
-times while the existing teaching process continued running. All samples reported
-READY, no fault, NRT_PLAN_EXECUTION and an active `PLAN-FreeDriveAuto`, with the
-current primitive/node at `Hold`/`hold` and `enabling_button_pressed=False`.
-The controller was not detecting the Motion Bar enabling button; starting this
-plan alone does not activate hand-guiding.
+An initial read-only connection to a Rizon 4 using RDK 1.9.3 observed the enabling
+button as released. A follow-up observation while the operator held the button
+captured **300 samples over 30.47 seconds**: every sample reported
+`enabling_button_pressed=True`, READY, no fault, NRT_PLAN_EXECUTION, and an active
+`PLAN-FreeDriveAuto` stuck at `rootNode::hold` / `Hold`. TCP position ranges were
+below 0.014 mm per axis. There was no breakpoint wait or timeliness failure, and the
+event log was empty. The button signal was working; adding button instructions did
+not resolve the failure. The internal plan's transition conditions were not exposed
+by the available read-only APIs, and FileIO could not export it as a user project.
 
-The teaching example now explains the hold-to-guide operation and displays current
-plan/button status. It refreshes status with `s`, checks readiness before recording,
-and still permits recording with the button released while the plan holds position.
-Records remain plain `[x,y,z,qw,qx,qy,qz]` lists. Custom plans retain their own
-activation conditions.
+The example now uses the documented RDK 1.x free-drive entry point:
+`ExecutePrimitive("FloatingCartesian", {})` in NRT_PRIMITIVE_EXECUTION, with
+`FloatingJoint` available as an option. See the
+[official free-drive manual](https://www.flexiv.com/software/rdk/manual/v1.x/free_drive.html).
+It no longer invokes `PLAN-FreeDriveAuto` or accepts `--plan`.
 
-- macOS arm64 / Python 3.12.13 / official RDK 1.9.3: **193 tests passed**.
-- Five new regression cases failed before the fix and pass afterward, covering
-  activation instructions/status and recording after faults, plan end or mode changes.
+The primitives do not enforce the enabling button themselves. The example requires
+an observed release before the first activation, polls the button at 50 Hz, and
+calls Stop on release. Nonblocking terminal reads keep incomplete/no keyboard input
+from suspending that loop. Primitive loading is requested without waiting for start;
+the loop checks for the actual primitive name and running state before reporting
+ACTIVE. This Python gate is not a replacement for the robot's safety functions and
+does not provide a real-time stopping guarantee.
+
+Regression coverage includes press/release transitions without keyboard input,
+startup with the button held, release during mode switching or primitive loading,
+faults, disconnect, mode changes, primitive termination/start timeout, polling delay,
+license/command failure, EOF/Ctrl+C, partial terminal input, and exact wxyz
+recording/replay. Existing records are saved even on controller errors.
+
+- macOS arm64 / Python 3.12.13 / official RDK 1.9.3: **205 tests passed**, including
+  18 teaching regression cases. The old default failed the primitive-dispatch regression.
 - Ruff and `git diff --check`: passed; the existing IKPy warning remains.
 
-The diagnostic connection issued no enable, stop, mode, plan or motion commands and
-did not interrupt the existing teaching process. No physical button transition or
-successful hand-guiding was observed; the tests validate the example's guidance and
-control flow, not physical free-drive behavior.
+All hardware observations were read-only and preserved the existing teaching
+process. The revised primitive path has not been executed on the physical robot;
+actual free-drive behavior and release-to-stop response still need an operator test.
 
 ## 0.3.1 — RDK 1.9.3 / controller 3.11.2 (2026-11-20)
 

@@ -224,18 +224,25 @@ python -m Examples.move_eef_follow_trajectory Rizon4-123456 --trajectory taught_
 python -m Examples.open_gripper_width Rizon4-123456 --port /dev/ttyUSB0 --position 100
 ```
 
-For `teach_by_demonstration`, keep the robot in **AUTO (REMOTE)** and **press and
-hold the enabling button on the Motion Bar while guiding the arm**. The default
-`PLAN-FreeDriveAuto` holds position when that button is released. Starting the plan
-alone does not make the arm freely movable. You may release the button at the
-desired pose, then enter `r` to record the unchanged wxyz vector.
+For `teach_by_demonstration`, use a Linux/macOS terminal and keep the robot in
+**AUTO (REMOTE)**. Release the Motion Bar enabling button once after startup,
+then **press and hold it while guiding the arm**. Release it to stop, then enter
+`r` to record the unchanged wxyz vector. Enter `s` for current status, or `q` to
+stop and save. EOF, Ctrl+C and controller errors also stop and save existing records.
 
-The example displays the current plan, primitive/node, enabling-button state and
-fault/operational status at startup. Enter `s` to refresh these readings, or `q` to
-stop and save. It rechecks controller status before each recording and refuses to
-record if the plan has ended, the mode changed or the robot is no longer ready.
-`sdk_status` also reports the current plan and button state without enabling motion.
-With `--plan`, the selected custom plan determines its own activation conditions.
+The example uses the official RDK 1.x `FloatingCartesian` primitive; select
+`--primitive FloatingJoint` for joint-space hand-guiding. Both require the
+corresponding controller license. The former `--plan` option was removed:
+the internal `PLAN-FreeDriveAuto` remained in `Hold` on the tested controller
+even with the enabling button detected as pressed.
+
+These primitives do not enforce the enabling button themselves. The example
+checks it at 50 Hz without blocking on keyboard input and calls `Stop()` on release.
+This Python monitoring does not replace robot safety functions or guarantee
+real-time stopping. It also stops on observed polling delays, faults, connection
+loss, unexpected mode/primitive changes or failure to start the primitive. Status
+reports `STARTING` until the requested primitive is confirmed running, then `ACTIVE`.
+`sdk_status` reads controller/plan/button state without enabling motion.
 
 Force-control and impedance examples enforce limits on duration, TCP displacement,
 and measured force/moment. They do not perform contact search or automatic sensor
